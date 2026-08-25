@@ -1,0 +1,9 @@
+RELATORIO FINAL DE VALIDACAO
+
+status: audit_only
+motivo: auditoria estrutural encontrou 4 erro(s)
+
+Execucao interrompida antes do treinamento.
+Modelo vencedor: indisponivel.
+Nenhum resultado numerico de modelo foi produzido.
+Limitacao: forneca um mapeamento explicito de GRUPO com --group-map-file.

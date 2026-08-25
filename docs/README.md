@@ -36,3 +36,29 @@ Esta pasta registra o que o notebook faz, o papel de cada fonte e os conflitos q
 Os quatro XLSX estão disponíveis e estruturalmente consistentes. O arquivo de caminhão está íntegro, possui a aba `Export` e cobre `202501`–`202608`.
 
 Os CSVs atuais são fontes detalhadas, enquanto o notebook espera tabelas já normalizadas e agregáveis. Por isso, a análise ainda requer uma camada de transformação para chaves, períodos e métricas AMS, AMC, APR e backlog.
+
+## Validação preditiva
+
+O pipeline executável será disponibilizado pelo pacote `modelo_confiabilidade`:
+
+```bash
+python -m modelo_confiabilidade \
+  --input-dir ./bases \
+  --output-dir ./resultados-auditoria \
+  --test-months 3 \
+  --max-lag 6 \
+  --group-map-file ./config/grupos.csv
+```
+
+O arquivo de mapeamento deve conter uma chave `EQUIPAMENTO` ou `TPLNR` e a
+coluna `GRUPO`. O grupo nunca é inferido pelo penúltimo segmento de `TPLNR`.
+Sem esse mapeamento explícito, ou diante de erro estrutural, o pipeline roda
+somente a auditoria, grava `auditoria_qualidade.csv`,
+`relatorio_qualidade_dados.csv`, o log e `relatorio_final.txt`, retorna código
+diferente de zero e não produz métricas de ML.
+
+As saídas de uma execução completa incluem a base analítica, métricas,
+previsões fora da amostra, coeficientes, importância, ranking de dados,
+features excluídas, metadata, diagnósticos, classificação, relatório e
+gráficos. A importância é preditiva; o significado AMS/AMC/APR/backlog só é
+apresentado como confirmado quando houver configuração semântica explícita.
