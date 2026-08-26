@@ -6,6 +6,7 @@ import subprocess
 import sys
 from typing import Mapping
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -25,8 +26,10 @@ from modelo_confiabilidade.dados import (
     _month_column,
     aggregate_monthly_data,
     build_group_mapping,
+    build_hierarchy_group_mapping,
     build_operational_features,
     create_lag_features,
+    derive_tplnr_hierarchy,
     normalize_columns,
     normalize_indicator_frame,
     parse_month_series,
@@ -399,15 +402,48 @@ def test_audit_only_report_contains_no_model_metrics(tmp_path: Path, small_sourc
     assert not (output_dir / "metricas_modelos.csv").exists()
 
 
-def test_main_persists_audit_before_missing_group_mapping_failure(small_source_dir: Path) -> None:
-    path = small_source_dir / OPERATIONAL_FILES["AMS_Contador"]
-    frame = pd.read_csv(path, sep=";", encoding="utf-8-sig").drop(columns=["GRUPO"])
-    frame.to_csv(path, sep=";", encoding="utf-8-sig", index=False)
-    output_dir = small_source_dir / "out-no-map"
+def test_final_report_distinguishes_predictive_importance_from_semantics(tmp_path: Path) -> None:
+    """The report must not present unconfirmed raw fields as business meaning."""
+    results = {
+        "status": "completed",
+        "base_analitica": pd.DataFrame(),
+        "metricas": pd.DataFrame(),
+        "importancia": pd.DataFrame({
+            "feature": ["AMS_Contador__IMAINDI383_sum_lag_1"],
+            "campo_original": ["IMAINDI383"],
+            "transformacao": ["sum com defasagem de 1 mes"],
+            "status_semantico": ["nao_confirmado"],
+        }),
+        "mapeamento_features": pd.DataFrame(),
+    }
 
-    assert main(["--input-dir", str(small_source_dir), "--output-dir", str(output_dir)]) == 1
-    audit = pd.read_csv(output_dir / "auditoria_qualidade.csv")
-    assert ((audit["categoria"] == "semantica") & audit["mensagem"].str.contains("GRUPO")).any()
+    write_final_report(results, tmp_path)
+
+    report = (tmp_path / "relatorio_final.txt").read_text(encoding="utf-8")
+    assert "importância preditiva" in report
+    assert "significado operacional confirmado" in report
+    assert "IMAINDI383" in report
+    assert "sum com defasagem de 1 mes" in report
+    assert "causou" not in report.lower()
+
+
+def test_main_does_not_require_group_map_when_tplnr_is_valid(small_source_dir: Path) -> None:
+    """The CLI derives groups from valid operational TPLNR values when no map is supplied."""
+    for index, filename in enumerate(OPERATIONAL_FILES.values(), start=1):
+        path = small_source_dir / filename
+        frame = pd.read_csv(path, sep=";", encoding="utf-8-sig")
+        frame = frame.drop(columns=["GRUPO"], errors="ignore")
+        frame["TPLNR"] = f"P-M-G{index}-EQ{index}"
+        frame.to_csv(path, sep=";", encoding="utf-8-sig", index=False)
+    for index, filename in enumerate(INDICATOR_FILES.values(), start=1):
+        indicator_path = small_source_dir / filename
+        indicator = pd.read_excel(indicator_path, sheet_name="Export")
+        indicator["EQUIPAMENTO"] = f"EQ{index}"
+        with pd.ExcelWriter(indicator_path) as writer:
+            indicator.to_excel(writer, sheet_name="Export", index=False)
+    output_dir = small_source_dir / "out-derived-group"
+
+    assert main(["--input-dir", str(small_source_dir), "--output-dir", str(output_dir)]) != 1
 
 
 def test_missing_group_mapping_stops_before_join(tmp_path: Path) -> None:
@@ -415,6 +451,93 @@ def test_missing_group_mapping_stops_before_join(tmp_path: Path) -> None:
 
     with pytest.raises(DataValidationError, match="mapeamento.*GRUPO"):
         build_group_mapping(indicators, {"AMS_Contador": pd.DataFrame()}, None)
+
+
+def test_derive_tplnr_hierarchy_uses_last_two_segments() -> None:
+    frame = pd.DataFrame({"TPLNR": ["PLANTA-MINA-CAM70-CA70959"]})
+
+    result = derive_tplnr_hierarchy(frame)
+
+    assert result.loc[0, "GRUPO"] == "CAM70"
+    assert result.loc[0, "EQUIPAMENTO"] == "CA70959"
+
+
+def test_derive_tplnr_hierarchy_rejects_missing_or_short_tplnr() -> None:
+    frame = pd.DataFrame({"TPLNR": [None, "ONLYONE"]})
+
+    with pytest.raises(DataValidationError, match="TPLNR"):
+        derive_tplnr_hierarchy(frame)
+
+
+def test_hierarchy_mapping_assigns_indicator_groups_by_equipment() -> None:
+    indicators = pd.DataFrame({"EQUIPAMENTO": ["CA70959"]})
+    operational = {"AMS_Contador": pd.DataFrame({"TPLNR": ["P-M-CAM70-CA70959"]})}
+
+    mapped_indicators, mapped_operational = build_hierarchy_group_mapping(indicators, operational)
+
+    assert mapped_indicators.loc[0, "GRUPO"] == "CAM70"
+    assert mapped_operational["AMS_Contador"].loc[0, "GRUPO"] == "CAM70"
+
+
+def test_hierarchy_mapping_rejects_equipment_assigned_to_multiple_groups() -> None:
+    indicators = pd.DataFrame({"EQUIPAMENTO": ["CA70959"]})
+    operational = {
+        "AMS_Contador": pd.DataFrame({"TPLNR": ["P-M-CAM70-CA70959"]}),
+        "AMC_ITABIRA": pd.DataFrame({"TPLNR": ["P-M-CAM71-CA70959"]}),
+    }
+
+    with pytest.raises(DataValidationError, match="multiplos grupos"):
+        build_hierarchy_group_mapping(indicators, operational)
+
+
+def test_hierarchy_mapping_rejects_indicator_equipment_without_group() -> None:
+    indicators = pd.DataFrame({"EQUIPAMENTO": ["CA70960"]})
+    operational = {"AMS_Contador": pd.DataFrame({"TPLNR": ["P-M-CAM70-CA70959"]})}
+
+    with pytest.raises(DataValidationError, match="Cobertura incompleta"):
+        build_hierarchy_group_mapping(indicators, operational)
+
+
+def test_main_audits_invalid_tplnr_hierarchy_without_group_map(small_source_dir: Path) -> None:
+    output_dir = small_source_dir / "out-invalid-hierarchy"
+
+    assert main(["--input-dir", str(small_source_dir), "--output-dir", str(output_dir)]) == 1
+
+    audit = pd.read_csv(output_dir / "auditoria_qualidade.csv")
+    diagnostic = audit[audit["fonte"] == "hierarquia_tplnr"].iloc[0]
+    assert diagnostic["campo"] == "TPLNR"
+    assert diagnostic["severidade"] == "ERROR"
+    assert "TPLNR" in diagnostic["valor"]
+
+
+def test_main_audits_hierarchy_conflict_with_specific_correction(small_source_dir: Path) -> None:
+    for source, filename in OPERATIONAL_FILES.items():
+        path = small_source_dir / filename
+        frame = pd.read_csv(path, sep=";", encoding="utf-8-sig")
+        frame["TPLNR"] = "P-M-G2-EQ1" if source == "AMC_ITABIRA" else "P-M-G1-EQ1"
+        frame.to_csv(path, sep=";", encoding="utf-8-sig", index=False)
+    output_dir = small_source_dir / "out-hierarchy-conflict"
+
+    assert main(["--input-dir", str(small_source_dir), "--output-dir", str(output_dir)]) == 1
+
+    audit = pd.read_csv(output_dir / "auditoria_qualidade.csv")
+    diagnostic = audit[audit["fonte"] == "hierarquia_tplnr"].iloc[0]
+    assert "resolver equipamento em um unico grupo" in diagnostic["valor"].lower()
+
+
+def test_main_audits_missing_hierarchy_coverage_with_specific_correction(small_source_dir: Path) -> None:
+    for filename in OPERATIONAL_FILES.values():
+        path = small_source_dir / filename
+        frame = pd.read_csv(path, sep=";", encoding="utf-8-sig")
+        frame["TPLNR"] = "P-M-G1-EQ1"
+        frame.to_csv(path, sep=";", encoding="utf-8-sig", index=False)
+    output_dir = small_source_dir / "out-missing-hierarchy-coverage"
+
+    assert main(["--input-dir", str(small_source_dir), "--output-dir", str(output_dir)]) == 1
+
+    audit = pd.read_csv(output_dir / "auditoria_qualidade.csv")
+    diagnostic = audit[audit["fonte"] == "hierarquia_tplnr"].iloc[0]
+    assert "incluir cobertura hierarquica para o equipamento" in diagnostic["valor"].lower()
 
 
 def test_lag_is_created_inside_each_group_without_future_values() -> None:
@@ -686,6 +809,146 @@ def make_small_dataset() -> pd.DataFrame:
                 "DF (REAL)": feature + 10.0,
             })
     return pd.DataFrame(rows)
+
+
+def _forecast_frame_with_all_responses() -> pd.DataFrame:
+    periods = pd.period_range("2025-01", periods=14, freq="M")
+    return pd.DataFrame({
+        "GRUPO": ["A"] * len(periods),
+        "MES": periods,
+        "DF (REAL)": range(len(periods)),
+        "MTBF (REAL)": range(10, 10 + len(periods)),
+        "MTBS (REAL)": range(20, 20 + len(periods)),
+        "MTTR": range(30, 30 + len(periods)),
+        "NIC (VMINA)": range(40, 40 + len(periods)),
+        "driver_lag_0": [float(value) for value in range(len(periods))],
+    })
+
+
+def _forecast_frame_with_missing_operational_months() -> pd.DataFrame:
+    frame = _forecast_frame_with_all_responses()
+    frame.loc[frame["MES"] < pd.Period("2025-05", freq="M"), "driver_lag_0"] = np.nan
+    return frame
+
+
+def _forecast_frame_with_known_driver_effect() -> pd.DataFrame:
+    driver = np.array([4.0, 18.0, 7.0, 21.0, 3.0, 15.0, 9.0, 24.0, 6.0, 27.0, 11.0, 30.0, 13.0])
+    response = np.r_[50.0, driver[:-1] * 10.0]
+    frame = pd.DataFrame({
+        "GRUPO": ["A"] * len(driver),
+        "MES": pd.period_range("2025-01", periods=len(driver), freq="M"),
+        "DF (REAL)": response,
+        "driver_lag_0": driver,
+        "current_response_decoy_lag_0": response,
+    })
+    frame.attrs["feature_metadata"] = pd.DataFrame([
+        {
+            "feature": "driver_lag_0",
+            "fonte": "S",
+            "campo_original": "driver",
+            "transformacao": "lag_0",
+            "defasagem": 0,
+            "status_semantico": "confirmado",
+            "risco_vazamento": "baixo",
+        },
+        {
+            "feature": "current_response_decoy_lag_0",
+            "fonte": "S",
+            "campo_original": "decoy_operacional",
+            "transformacao": "lag_0",
+            "defasagem": 0,
+            "status_semantico": "confirmado",
+            "risco_vazamento": "baixo",
+        },
+    ])
+    return frame
+
+
+def test_oos_importance_uses_next_month_target_and_final_test_rows() -> None:
+    """OOS explanations rank the driver of the forecast target, not the contemporaneous response."""
+    data = _forecast_frame_with_known_driver_effect()
+    predictions, _, metadata = run_temporal_validation(
+        data, "DF (REAL)", Config(test_months=2, min_train_rows=6, min_test_rows=2)
+    )
+    train_frame = metadata["forecast_train_frame"]
+    test_frame = metadata["forecast_test_frame"]
+
+    coefficients, ranking = extract_model_explanations(
+        train_frame,
+        predictions,
+        "DF (REAL)",
+        validation_frame=test_frame,
+        estimator=metadata["final_estimators"]["elastic_net"],
+        response_column="_target",
+    )
+
+    assert not coefficients.empty
+    assert ranking["status_importancia"].eq("oos_permutacao").all()
+    assert ranking.iloc[0]["feature"] == "driver_lag_0"
+
+
+def test_temporal_validation_excludes_other_reliability_responses() -> None:
+    """Other reliability responses never become predictors for a selected response."""
+    frame = _forecast_frame_with_all_responses()
+
+    _, _, metadata = run_temporal_validation(
+        frame, "DF (REAL)", Config(test_months=2, min_train_rows=4, min_test_rows=2)
+    )
+
+    assert "MTBF (REAL)" not in metadata["feature_columns"]
+    assert "MTBS (REAL)" not in metadata["feature_columns"]
+
+
+def test_temporal_validation_uses_explicit_operational_predictor_contract() -> None:
+    """The caller can constrain training to the supplied operational predictors."""
+    frame = _forecast_frame_with_all_responses()
+
+    _, _, metadata = run_temporal_validation(
+        frame,
+        "DF (REAL)",
+        Config(test_months=2, min_train_rows=4, min_test_rows=2),
+        predictor_columns=["driver_lag_0"],
+    )
+
+    assert metadata["feature_columns"] == ["driver_lag_0"]
+    assert metadata["predictor_columns"] == ["driver_lag_0"]
+
+
+def test_temporal_exclusions_appear_with_origin_tag_in_features_excluidas(tmp_path: Path) -> None:
+    """Predictor exclusions from temporal validation are persisted with a distinct origin tag."""
+    from modelo_confiabilidade._pipeline import _temporal_validation_audit
+
+    frame = _forecast_frame_with_all_responses()
+    frame["text_preditor"] = "non-numeric"
+    _, _, metadata = run_temporal_validation(
+        frame, "DF (REAL)", Config(test_months=2, min_train_rows=4, min_test_rows=2),
+        predictor_columns=["driver_lag_0", "text_preditor"],
+    )
+
+    assert any(excl.get("motivo") == "preditor nao numerico" for excl in metadata.get("excluded_features", []))
+
+    _, temporal_exclusions = _temporal_validation_audit("DF (REAL)", metadata)
+    assert not temporal_exclusions.empty
+    assert (temporal_exclusions["origem_exclusao"] == "validacao_temporal").all()
+    assert (temporal_exclusions["resposta"] == "DF (REAL)").all()
+
+    operational_exclusions = pd.DataFrame([{"campo_original": "id", "motivo": "chave"}])
+    combined = pd.concat([operational_exclusions, temporal_exclusions], ignore_index=True, sort=False)
+    save_results({"features_excluidas": combined}, tmp_path)
+    csv = pd.read_csv(tmp_path / "features_excluidas.csv")
+    assert (csv["origem_exclusao"] == "validacao_temporal").sum() >= 1
+    assert (csv["origem_exclusao"].isna()).sum() >= 1
+
+
+def test_temporal_validation_does_not_use_rows_without_operational_features() -> None:
+    """Months before operational coverage cannot become imputed training observations."""
+    frame = _forecast_frame_with_missing_operational_months()
+
+    _, _, metadata = run_temporal_validation(
+        frame, "DF (REAL)", Config(test_months=2, min_train_rows=4, min_test_rows=2)
+    )
+
+    assert metadata["train_target_periods"][0] >= pd.Period("2025-05", freq="M")
 
 
 def test_metrics_ignore_zero_denominator_in_mape() -> None:
@@ -990,26 +1253,91 @@ def test_permutation_importance_blocks_train_copy_without_oos_marker() -> None:
 
 
 def test_permutation_importance_blocks_overlapping_oos_keys() -> None:
-    train = _diagnostic_frame().drop(columns="x_duplicate")
+    train = _diagnostic_frame().drop(columns="x_duplicate").assign(_target=lambda frame: frame["response"])
     train["GRUPO"] = "A"
     train["MES"] = pd.period_range("2025-01", periods=len(train), freq="M")
+    train.attrs["feature_columns"] = ["x"]
     validation = train.copy()
     validation.attrs["fora_amostra"] = True
+    validation.attrs["forecast_test_frame"] = True
+    estimator = build_model_pipeline("elastic_net", random_state=7)
+    estimator.fit(train[["x"]], train["_target"])
     _, ranking = extract_model_explanations(
-        train, _prediction_frame(), "response", validation_frame=validation
+        train,
+        _prediction_frame(),
+        "response",
+        validation_frame=validation,
+        estimator=estimator,
+        response_column="_target",
     )
 
     assert ranking["status_importancia"].eq("indisponivel").all()
     assert ranking["texto"].str.contains("sobreposicao|OOS", case=False, regex=True).all()
 
 
-def test_permutation_importance_accepts_explicit_non_overlapping_oos_frame() -> None:
+def test_permutation_importance_blocks_main_fallback_without_forecast_handoff() -> None:
     train = _diagnostic_frame().drop(columns="x_duplicate")
     validation = train.copy()
     validation.index = validation.index + 100
     validation.attrs["fora_amostra"] = True
     _, ranking = extract_model_explanations(
         train, _prediction_frame(), "response", validation_frame=validation
+    )
+
+    assert ranking["status_importancia"].eq("indisponivel").all()
+    assert ranking["importancia"].isna().all()
+
+
+def test_permutation_importance_requires_forecast_estimator_target_and_frame() -> None:
+    data = _forecast_frame_with_known_driver_effect()
+    predictions, _, metadata = run_temporal_validation(
+        data, "DF (REAL)", Config(test_months=2, min_train_rows=6, min_test_rows=2)
+    )
+    train_frame = metadata["forecast_train_frame"]
+    test_frame = metadata["forecast_test_frame"]
+
+    _, ranking_without_estimator = extract_model_explanations(
+        train_frame,
+        predictions,
+        "DF (REAL)",
+        validation_frame=test_frame,
+        response_column="_target",
+    )
+    _, ranking_without_future_target = extract_model_explanations(
+        train_frame,
+        predictions,
+        "DF (REAL)",
+        validation_frame=test_frame,
+        estimator=metadata["final_estimators"]["elastic_net"],
+    )
+    ad_hoc_test = test_frame.copy()
+    ad_hoc_test.attrs.pop("forecast_test_frame", None)
+    _, ranking_without_forecast_frame = extract_model_explanations(
+        train_frame,
+        predictions,
+        "DF (REAL)",
+        validation_frame=ad_hoc_test,
+        estimator=metadata["final_estimators"]["elastic_net"],
+        response_column="_target",
+    )
+
+    assert ranking_without_estimator["status_importancia"].eq("indisponivel").all()
+    assert ranking_without_future_target["status_importancia"].eq("indisponivel").all()
+    assert ranking_without_forecast_frame["status_importancia"].eq("indisponivel").all()
+
+
+def test_permutation_importance_accepts_forecast_handoff() -> None:
+    data = _forecast_frame_with_known_driver_effect()
+    predictions, _, metadata = run_temporal_validation(
+        data, "DF (REAL)", Config(test_months=2, min_train_rows=6, min_test_rows=2)
+    )
+    _, ranking = extract_model_explanations(
+        metadata["forecast_train_frame"],
+        predictions,
+        "DF (REAL)",
+        validation_frame=metadata["forecast_test_frame"],
+        estimator=metadata["final_estimators"]["elastic_net"],
+        response_column="_target",
     )
 
     assert ranking["status_importancia"].eq("oos_permutacao").all()
@@ -1095,6 +1423,13 @@ def test_save_results_persists_required_tables(tmp_path: Path) -> None:
         "importancia": pd.DataFrame([{"feature": "x"}]),
         "ranking": pd.DataFrame([{"feature": "x"}]),
         "features_excluidas": pd.DataFrame([{"campo_original": "id", "motivo": "chave"}]),
+        "cobertura_temporal": pd.DataFrame([{
+            "resposta": "DF (REAL)",
+            "min_feature_non_null": 0.5,
+            "dropped_rows_without_operational_coverage": 2,
+            "dropped_source_periods": "2025-01,2025-02",
+            "dropped_target_periods": "2025-02,2025-03",
+        }]),
         "mapeamento_features": pd.DataFrame([{"feature": "x", "status_semantico": "nao_confirmado"}]),
         "diagnosticos": pd.DataFrame([{"diagnostico": "amostra", "status": "ok"}]),
         "classificacao": pd.DataFrame([{"resposta": "DF (REAL)", "classificacao": "INVALIDO"}]),
@@ -1106,9 +1441,12 @@ def test_save_results_persists_required_tables(tmp_path: Path) -> None:
         "relatorio_qualidade_dados.csv", "base_analitica.csv", "metricas_modelos.csv",
         "previsoes_fora_amostra.csv", "coeficientes_elastic_net.csv", "importancia_variaveis.csv",
         "ranking_dados_recomendados.csv", "features_excluidas.csv", "mapeamento_features.csv",
-        "diagnosticos_estatisticos.csv", "classificacao_validade.csv",
+        "cobertura_temporal_validacao.csv", "diagnosticos_estatisticos.csv", "classificacao_validade.csv",
     }
     assert expected.issubset({path.name for path in tmp_path.iterdir()})
+    coverage = pd.read_csv(tmp_path / "cobertura_temporal_validacao.csv")
+    assert coverage.loc[0, "resposta"] == "DF (REAL)"
+    assert coverage.loc[0, "dropped_rows_without_operational_coverage"] == 2
 
 
 def test_generate_plots_writes_png_for_oos_predictions(tmp_path: Path) -> None:
@@ -1151,4 +1489,6 @@ def test_audit_only_run_writes_quality_report_and_returns_error(small_source_dir
 
     assert code != 0
     assert (output_dir / "relatorio_qualidade_dados.csv").exists()
-    assert "mapeamento" in (output_dir / "relatorio_final.txt").read_text(encoding="utf-8").lower()
+    report = (output_dir / "relatorio_final.txt").read_text(encoding="utf-8").lower()
+    assert "tplnr" in report
+    assert "derivado" in report

@@ -31,15 +31,31 @@ primeiro nome de coluna.
 O notebook exige `TPLNR05` e `CALMONTH-Calendar_year_month`. Os arquivos atuais
 fornecem principalmente `TPLNR`, `YEAR` e `CALMONTH`.
 
-Além disso, o notebook obtém o grupo com o penúltimo segmento da chave:
+O pipeline executável adota a hierarquia validada de `TPLNR`: o penúltimo
+segmento é `GRUPO` e o último é `EQUIPAMENTO`.
 
 ```python
-TPLNR05.str.split("-").str[-2]
+partes = TPLNR.str.split("-")
+GRUPO = partes.str[-2]
+EQUIPAMENTO = partes.str[-1]
 ```
 
-Essa regra não está confirmada para os `TPLNR` atuais. Há estruturas em que o
-penúltimo segmento representa status ou outra parte da hierarquia, e não o
-universo ou grupo operacional desejado.
+Antes de modelar, o pipeline verifica que todos os `TPLNR` operacionais estão
+preenchidos e têm pelo menos dois segmentos finais não vazios; verifica também
+que um mesmo `EQUIPAMENTO` não aparece associado a mais de um `GRUPO` e que os
+equipamentos dos indicadores têm cobertura na hierarquia. Falhas entram na
+auditoria com fonte `hierarquia_tplnr`, campo `TPLNR`, severidade `ERROR` e uma
+correção acionável. Um arquivo informado por `--group-map-file` continua sendo
+um override explícito para substituir essa rota.
+
+## Semântica dos campos operacionais
+
+Os nomes brutos das colunas, incluindo `IMAINDI*`, são preservados no pipeline
+e no relatório. Enquanto não houver uma regra de negócio validada, essas
+features recebem `status_semantico=nao_confirmado`: podem ter importância
+preditiva, mas não têm significado operacional confirmado. Portanto, o
+pipeline não inventa aliases AMS, AMC, APR ou backlog por semelhança de nome,
+nem interpreta contribuição à previsão como causalidade.
 
 ## Colunas AMS
 
@@ -82,6 +98,8 @@ nome de coluna.
 Os meses de janeiro a abril de 2025 possuem indicadores de confiabilidade, mas
 não possuem dados operacionais correspondentes nos CSVs atuais. Os resultados
 do notebook também não representam os dados mais recentes até agosto de 2026.
+Na execução preditiva, a cobertura operacional comum é a janela elegível; os
+meses sem cobertura suficiente são removidos antes da divisão temporal.
 
 ## Nível de Detalhe
 

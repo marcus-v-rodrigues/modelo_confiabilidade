@@ -68,14 +68,29 @@ Esses campos devem ser tratados como candidatos a variáveis explicativas na fas
 
 ## Chaves e Períodos
 
+### Contexto histórico
+
 As bases novas utilizam principalmente `YEAR`, `CALMONTH`, `TPLNR`, `EQUNR` e
 chaves SAP detalhadas. Os XLSX utilizam `ANO MÊS` e `EQUIPAMENTO`.
 
-Não existe equivalência automática garantida entre:
+Na comparação histórica das bases, não havia equivalência automática garantida
+entre:
 
 - `EQUIPAMENTO` e `TPLNR`;
 - `EQUIPAMENTO` e `EQUNR`;
 - `TPLNR` e `GRUPO`.
+
+### Regra atual do pipeline
+
+No fluxo atual, a hierarquia operacional é derivada de um `TPLNR` validado:
+`GRUPO = TPLNR[-2]` e `EQUIPAMENTO = TPLNR[-1]`. Assim, o último segmento de
+`TPLNR` é associado ao `EQUIPAMENTO` dos XLSX e o penúltimo identifica o grupo
+ao qual os indicadores de confiabilidade são agregados. O pipeline valida essa
+correspondência antes de modelar.
+
+`--group-map-file` não é obrigatório: é somente um override opcional e
+compatível quando houver uma fonte externa de mapeamento que deva prevalecer
+sobre a derivação por `TPLNR`.
 
 A interseção temporal entre indicadores e fontes operacionais novas é
 `202505`-`202608`. Os meses `202501`-`202504` possuem indicadores de

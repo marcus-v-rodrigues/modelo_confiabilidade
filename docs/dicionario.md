@@ -5,6 +5,11 @@ nos arquivos atuais. `Direto` significa que o campo existe com o mesmo nome;
 `derivado` indica que pode exigir transformação; `indefinido` significa que não
 há equivalência confirmada apenas pela inspeção dos nomes.
 
+Os nomes operacionais brutos são mantidos no pipeline. Em especial,
+`IMAINDI*` recebe `status_semantico=nao_confirmado` até validação de negócio;
+não se cria um alias AMS, AMC, APR ou backlog apenas pelo nome. A importância
+do modelo é preditiva e não afirma causalidade.
+
 ## Indicadores de Confiabilidade
 
 | Notebook | Arquivo atual | Status | Observação |
@@ -16,13 +21,13 @@ há equivalência confirmada apenas pela inspeção dos nomes.
 | `MTBS (REAL)` | `MTBS (REAL)` | Direto | Usado como resposta. |
 | `MTTR` | `MTTR` | Direto | Usado como resposta. |
 | `NIC (VMINA)` | `NIC (VMINA)` | Direto | Usado como resposta. |
-| `GRUPO` | Não existe nos XLSX | Derivado | Criado a partir de um mapa baseado em hierarquia operacional. |
+| `GRUPO` | Não existe nos XLSX | Derivado | Regra normal: penúltimo segmento do `TPLNR` operacional (`TPLNR[-2]`). |
 
 ## Chaves Temporais e de Equipamento
 
 | Notebook | Atual | Status | Observação |
 |---|---|---|---|
-| `TPLNR05` | `TPLNR` | Derivado | A equivalência de nível hierárquico precisa ser validada. |
+| `TPLNR05` | `TPLNR` | Derivado | Regra normal: `GRUPO=TPLNR[-2]` e `EQUIPAMENTO=TPLNR[-1]`; `--group-map-file` é apenas override explícito opcional. |
 | `CALMONTH-Calendar_year_month` | `CALMONTH` | Derivado | Requer padronização para `ANO MÊS`. |
 | `ANO MÊS` | `YEAR` + `CALMONTH` | Derivado | Pode ser reconstruído, preservando zeros e formato `YYYYMM`. |
 
@@ -31,8 +36,8 @@ há equivalência confirmada apenas pela inspeção dos nomes.
 | Notebook | Atual | Status | Observação |
 |---|---|---|---|
 | `AMS_00H` | Não identificado diretamente | Indefinido | Definir se é campo bruto ou cálculo. |
-| Ordens AMS previstas | `IMAINDI383` | Derivado | Campo relacionado; confirmar significado e agregação. |
-| Ordens AMS fechadas | `IMAINDI384` | Derivado | Campo relacionado; confirmar significado e agregação. |
+| Campo bruto preservado | `IMAINDI383` | Indefinido | Não atribuir alias operacional antes de confirmar significado e agregação. |
+| Campo bruto preservado | `IMAINDI384` | Indefinido | Não atribuir alias operacional antes de confirmar significado e agregação. |
 | `AMS_PREVISTAS` | Contagem agregada de ordens | Derivado | O notebook espera uma tabela já agregada. |
 | `AMS_EXECUTADAS` | Contagem agregada de fechadas | Derivado | O notebook calcula pendentes por diferença. |
 
@@ -41,7 +46,7 @@ há equivalência confirmada apenas pela inspeção dos nomes.
 | Notebook | Atual | Status | Observação |
 |---|---|---|---|
 | `AMC_00I` | Não identificado diretamente | Indefinido | Não assumir equivalência com outro indicador. |
-| AMC planejadas | `IMAINDI189_ACTUAL_NA` ou relacionados | Indefinido | Requer validação da regra usada pela tabela original. |
+| Campo bruto preservado | `IMAINDI189_ACTUAL_NA` ou relacionados | Indefinido | Não atribuir alias operacional antes da validação da regra usada pela tabela original. |
 | `AMC_PREVISTAS` | Contagem agregada de notificações | Derivado | Depende dos filtros de período e status. |
 | `AMC_EXECUTADAS` | Previstas × `AMC_00I / 100` | Derivado | Fórmula existente no notebook. |
 

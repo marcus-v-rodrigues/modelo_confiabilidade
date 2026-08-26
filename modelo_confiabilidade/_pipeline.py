@@ -1,7 +1,7 @@
-"""Configuration and source loading for the model validation pipeline.
+"""Temporal reliability validation pipeline, from source loading to reporting.
 
-This module intentionally only loads the source tables. It does not infer
-semantic mappings between operational data and indicator groups.
+Groups come from an explicit mapping file when supplied; otherwise they are
+derived from the final two validated segments of each operational ``TPLNR``.
 """
 
 from __future__ import annotations
@@ -369,6 +369,82 @@ def _normalize_group_values(frame: pd.DataFrame, source: str) -> pd.DataFrame:
     return result
 
 
+def derive_tplnr_hierarchy(
+    frame: pd.DataFrame,
+    tplnr_column: str = "TPLNR",
+) -> pd.DataFrame:
+    """Derive the group and equipment from the final TPLNR segments."""
+    if tplnr_column not in frame.columns:
+        raise DataValidationError(f"Coluna TPLNR ausente: {tplnr_column}")
+
+    values = frame[tplnr_column].astype("string").str.strip()
+    invalid = values.isna() | values.eq("")
+    parts = values.str.split("-")
+    valid_parts = parts.map(
+        lambda value: isinstance(value, list)
+        and len(value) >= 2
+        and all(str(part).strip() for part in value[-2:])
+    )
+    invalid |= ~valid_parts
+    if invalid.any():
+        sample = values[invalid].head(3).tolist()
+        raise DataValidationError(
+            f"TPLNR invalido na coluna {tplnr_column}: {int(invalid.sum())}; amostra: {sample}"
+        )
+
+    result = frame.copy()
+    result["GRUPO"] = parts.map(lambda value: str(value[-2]).strip())
+    result["EQUIPAMENTO"] = parts.map(lambda value: str(value[-1]).strip())
+    return result
+
+
+def build_hierarchy_group_mapping(
+    indicators: pd.DataFrame,
+    operational: Mapping[str, pd.DataFrame],
+) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """Derive operational groups from TPLNR and join them to indicators."""
+    derived_operational: dict[str, pd.DataFrame] = {}
+    for source, frame in operational.items():
+        try:
+            derived_operational[source] = derive_tplnr_hierarchy(frame)
+        except DataValidationError as exc:
+            raise DataValidationError(f"Fonte {source}: {exc}") from exc
+
+    lookup_source = pd.concat(
+        [frame[["EQUIPAMENTO", "GRUPO"]] for frame in derived_operational.values()],
+        ignore_index=True,
+    ) if derived_operational else pd.DataFrame(columns=["EQUIPAMENTO", "GRUPO"])
+    lookup_source["EQUIPAMENTO"] = lookup_source["EQUIPAMENTO"].astype("string").str.strip()
+    lookup_source["GRUPO"] = lookup_source["GRUPO"].astype("string").str.strip()
+    groups_per_equipment = lookup_source.groupby("EQUIPAMENTO")["GRUPO"].nunique()
+    ambiguous = groups_per_equipment[groups_per_equipment > 1]
+    if not ambiguous.empty:
+        error = DataValidationError(
+            "Equipamento associado a multiplos grupos: " + ", ".join(ambiguous.index.astype(str))
+        )
+        error.correction = "resolver equipamento em um unico grupo"
+        raise error
+    lookup = lookup_source.drop_duplicates("EQUIPAMENTO")
+
+    if "EQUIPAMENTO" not in indicators.columns:
+        raise DataValidationError("Indicadores requerem a coluna EQUIPAMENTO para o mapeamento")
+    mapped_indicators = indicators.copy()
+    mapped_indicators["EQUIPAMENTO"] = mapped_indicators["EQUIPAMENTO"].astype("string").str.strip()
+    if "GRUPO" in mapped_indicators.columns:
+        mapped_indicators = mapped_indicators.drop(columns=["GRUPO"])
+    mapped_indicators = mapped_indicators.merge(lookup, on="EQUIPAMENTO", how="left", sort=False)
+    missing_group = mapped_indicators["GRUPO"].isna() | mapped_indicators["GRUPO"].astype("string").str.strip().eq("")
+    if missing_group.any():
+        sample = mapped_indicators.loc[missing_group, "EQUIPAMENTO"].head(3).astype(str).tolist()
+        error = DataValidationError(
+            "Cobertura incompleta da hierarquia para equipamentos dos indicadores; amostra: "
+            + ", ".join(sample)
+        )
+        error.correction = "incluir cobertura hierarquica para o equipamento"
+        raise error
+    return mapped_indicators, derived_operational
+
+
 def build_group_mapping(
     indicators: pd.DataFrame,
     operational: Mapping[str, pd.DataFrame],
@@ -603,6 +679,7 @@ def build_operational_features(
             )
             coverage.append(report)
         aggregate = aggregate.rename(columns={column: f"{source}__{column}" for column in aggregate.columns if column not in {"GRUPO", "MES"}})
+        aggregate.attrs.clear()
         frames.append(aggregate)
         for feature in aggregate.columns:
             if feature in {"GRUPO", "MES"}:
@@ -667,6 +744,7 @@ def build_operational_features(
     excluded_frame = pd.DataFrame(excluded, columns=["fonte", "campo_original", "motivo"])
     result = result.sort_values(["GRUPO", "MES"]).reset_index(drop=True)
     result.attrs["feature_metadata"] = metadata_frame
+    result.attrs["coverage_report"] = coverage_frame
     return result, metadata_frame, excluded_frame
 
 
@@ -719,6 +797,11 @@ def create_lag_features(
         result["resposta_t1"] = result.groupby("GRUPO", sort=False)["resposta"].shift(-1)
     metadata = pd.DataFrame(records, columns=FEATURE_METADATA_COLUMNS)
     metadata.attrs["events"] = pd.DataFrame(metadata_events, columns=["tipo", "feature", "mensagem"])
+    metadata.attrs["coverage_report"] = (
+        source_metadata.attrs.get("coverage_report", pd.DataFrame())
+        if isinstance(source_metadata, pd.DataFrame)
+        else pd.DataFrame()
+    )
     return result, metadata
 
 
@@ -726,6 +809,70 @@ PREDICTION_COLUMNS = [
     "resposta", "modelo", "periodo", "valor_real", "valor_previsto",
     "erro", "erro_absoluto", "erro_percentual", "divisao", "fora_amostra",
 ]
+
+
+CANONICAL_RELIABILITY_RESPONSES = {
+    "DF (REAL)", "MTBF (REAL)", "MTBS (REAL)", "MTTR", "NIC (VMINA)",
+}
+
+
+def _is_reliability_response_feature(
+    column: str,
+    metadata_by_feature: Mapping[str, Mapping[str, object]],
+) -> bool:
+    """Identify a canonical response or any feature explicitly derived from one."""
+    response_keys = {_column_key(name) for name in CANONICAL_RELIABILITY_RESPONSES}
+    details = metadata_by_feature.get(column, {})
+    values = (column, details.get("campo_original", ""), details.get("papel", ""))
+    return (
+        str(details.get("papel", "")).lower() == "resposta"
+        or any(
+            response_key and response_key in _column_key(str(value))
+            for response_key in response_keys
+            for value in values
+        )
+    )
+
+
+def _select_predictor_columns(
+    frame: pd.DataFrame,
+    response: str,
+    predictor_columns: Sequence[str] | None,
+) -> tuple[list[str], list[dict[str, str]]]:
+    """Select only numeric operational predictors and audit every rejection."""
+    source_metadata = frame.attrs.get("feature_metadata", pd.DataFrame())
+    metadata_by_feature: dict[str, Mapping[str, object]] = {}
+    if isinstance(source_metadata, pd.DataFrame) and "feature" in source_metadata.columns:
+        metadata_by_feature = source_metadata.set_index("feature").to_dict("index")
+    requested = (
+        list(predictor_columns)
+        if predictor_columns is not None
+        else frame.select_dtypes(include=[np.number]).columns.tolist()
+    )
+    selected: list[str] = []
+    excluded: list[dict[str, str]] = []
+    for column in dict.fromkeys(requested):
+        if column not in frame.columns:
+            excluded.append({"feature": str(column), "motivo": "preditor ausente"})
+        elif column in {response, "_target"} or _is_reliability_response_feature(column, metadata_by_feature):
+            excluded.append({"feature": str(column), "motivo": "resposta de confiabilidade ou derivada"})
+        elif not pd.api.types.is_numeric_dtype(frame[column]):
+            excluded.append({"feature": str(column), "motivo": "preditor nao numerico"})
+        else:
+            selected.append(str(column))
+    return selected, excluded
+
+
+def _operational_coverage_mask(
+    frame: pd.DataFrame,
+    feature_columns: Sequence[str],
+    min_feature_non_null: float,
+) -> pd.Series:
+    """Keep rows with the configured fraction of observed operational predictors."""
+    if not feature_columns:
+        return pd.Series(False, index=frame.index)
+    non_null_fraction = frame.loc[:, list(feature_columns)].notna().mean(axis=1)
+    return non_null_fraction.ge(min_feature_non_null)
 
 
 def calculate_regression_metrics(
@@ -851,9 +998,12 @@ def _fit_search(
 
 
 def run_temporal_validation(
-    data: pd.DataFrame, response: str, config: Config
+    data: pd.DataFrame,
+    response: str,
+    config: Config,
+    predictor_columns: Sequence[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """Train models using chronological, period-grouped OOF and final splits."""
+    """Train models with chronological splits and an explicit predictor contract."""
     empty_predictions = pd.DataFrame(columns=PREDICTION_COLUMNS + ["GRUPO"])
     empty_splits = pd.DataFrame(columns=[
         "divisao", "fold", "train_rows", "test_rows", "train_max_period",
@@ -881,13 +1031,30 @@ def run_temporal_validation(
         frame["_target"].notna()
         & frame["_target_period"].eq(frame[period_column] + 1)
     ].copy()
+    feature_columns, excluded_features = _select_predictor_columns(
+        frame, response, predictor_columns
+    )
+    coverage_mask = _operational_coverage_mask(
+        frame, feature_columns, config.min_feature_non_null
+    )
+    dropped = frame.loc[~coverage_mask].copy()
+    coverage_audit = {
+        "min_feature_non_null": config.min_feature_non_null,
+        "dropped_rows_without_operational_coverage": int((~coverage_mask).sum()),
+        "dropped_source_periods": tuple(dropped[period_column].dropna().unique()),
+        "dropped_target_periods": tuple(dropped["_target_period"].dropna().unique()),
+    }
+    frame = frame.loc[coverage_mask].copy()
     periods = pd.Index(frame["_target_period"].dropna().unique()).sort_values()
     test_periods = periods[-config.test_months:] if len(periods) else periods
     train_periods = periods[:-config.test_months] if len(periods) > config.test_months else periods[:0]
-    feature_columns = [
-        column for column in frame.select_dtypes(include=[np.number]).columns
-        if column not in {response, "_target"}
-    ]
+    metadata_context = {
+        "feature_columns": feature_columns,
+        "predictor_columns": feature_columns,
+        "excluded_features": excluded_features,
+        "coverage_audit": coverage_audit,
+        "dropped_periods": coverage_audit["dropped_target_periods"],
+    }
     if (
         len(train_periods) < 3 or len(test_periods) == 0 or not feature_columns
         or int(frame[frame["_target_period"].isin(train_periods)].shape[0]) < config.min_train_rows
@@ -910,15 +1077,20 @@ def run_temporal_validation(
             "status": "insuficiente", "motivo": "linhas ou periodos insuficientes",
             "train_rows": train_rows, "test_rows": test_rows,
             "metricas": insufficient_metrics,
+            **metadata_context,
         }
     train = frame[frame["_target_period"].isin(train_periods)].copy()
     final_test = frame[frame["_target_period"].isin(test_periods)].copy()
     n_splits = min(3, len(train_periods) - 1)
     if n_splits < 2:
-        return empty_predictions, empty_splits, {"status": "insuficiente", "motivo": "janelas temporais insuficientes"}
+        return empty_predictions, empty_splits, {
+            "status": "insuficiente", "motivo": "janelas temporais insuficientes",
+            **metadata_context,
+        }
     split_records: list[dict[str, Any]] = []
     prediction_frames: list[pd.DataFrame] = []
     hyperparameters: dict[str, dict[str, Any]] = {}
+    final_estimators: dict[str, Pipeline] = {}
     metric_stability: dict[str, dict[str, dict[str, Any]]] = {}
     metric_records: list[dict[str, Any]] = []
     for model_name in ("elastic_net", "random_forest"):
@@ -970,6 +1142,7 @@ def run_temporal_validation(
             predicted_test, "teste", final_test[group_column] if group_column else pd.Series("*", index=final_test.index),
         ))
         hyperparameters[model_name] = final_params
+        final_estimators[model_name] = final_estimator
         final_metric = calculate_regression_metrics(final_test["_target"], predicted_test, len(feature_columns))
         metric_records.append({
             "resposta": response, "modelo": model_name, "divisao": "teste_final",
@@ -994,7 +1167,7 @@ def run_temporal_validation(
                 "desvio_padrao": float(np.std(finite_values)) if finite_values else None,
                 "por_janela": [float(value) if np.isfinite(value) else None for value in window_values],
             }
-    baseline = frame.loc[frame["_target_period"].isin(test_periods)].copy()
+    baseline = final_test.copy()
     baseline_pred = baseline[response]
     prediction_frames.append(_prediction_frame(
         response, "baseline_t1", baseline["_target_period"], baseline["_target"], baseline_pred,
@@ -1018,15 +1191,27 @@ def run_temporal_validation(
         "train_target_periods": tuple(train["_target_period"].unique()),
         "test_target_periods": tuple(final_test["_target_period"].unique()),
     })
+    forecast_train_frame = train.copy()
+    forecast_test_frame = final_test.copy()
+    forecast_train_frame.attrs["feature_columns"] = list(feature_columns)
+    forecast_train_frame.attrs["forecast_train_frame"] = True
+    forecast_test_frame.attrs["feature_columns"] = list(feature_columns)
+    forecast_test_frame.attrs["forecast_test_frame"] = True
+    forecast_test_frame.attrs["fora_amostra"] = True
     metadata = {
         "status": "ok", "response": response, "test_months": config.test_months,
         "train_rows": len(train), "test_rows": len(final_test),
-        "feature_columns": feature_columns, "hyperparameters": hyperparameters,
+        "final_estimators": final_estimators,
+        "forecast_train_frame": forecast_train_frame,
+        "forecast_test_frame": forecast_test_frame,
+        "forecast_target_column": "_target",
+        "hyperparameters": hyperparameters,
         "stabilidade_metricas": metric_stability,
         "metricas": metric_records,
         "train_target_periods": tuple(train["_target_period"].unique()),
         "test_target_periods": tuple(final_test["_target_period"].unique()),
         "splits": len(split_records),
+        **metadata_context,
     }
     return pd.concat(prediction_frames, ignore_index=True), pd.DataFrame(split_records), metadata
 
@@ -1230,14 +1415,22 @@ def extract_model_explanations(
     model_name: str = "elastic_net", random_state: int = 42,
     validation_frame: pd.DataFrame | None = None,
     estimator: Pipeline | None = None,
+    response_column: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return model coefficients and validation permutation rankings."""
     features, meta_by_feature, excluded = _eligible_explanation_features(train_frame, response)
+    forecast_features = train_frame.attrs.get("feature_columns")
+    if forecast_features:
+        features = [str(feature) for feature in forecast_features if feature in train_frame.columns]
+        forecast_feature_set = set(features)
+        excluded = [item for item in excluded if item["feature"] not in forecast_feature_set]
     coefficients: list[dict[str, object]] = []
-    if not features or response not in train_frame:
+    target_column = response_column or response
+    if not features or target_column not in train_frame:
         return pd.DataFrame(columns=EXPLANATION_COLUMNS), pd.DataFrame(columns=EXPLANATION_COLUMNS)
     fitted = estimator or build_model_pipeline(model_name, random_state)
-    fitted.fit(train_frame[features], train_frame[response])
+    if estimator is None:
+        fitted.fit(train_frame[features], train_frame[target_column])
     model = fitted.named_steps.get("model")
     if hasattr(model, "coef_"):
         values = np.asarray(model.coef_).ravel()
@@ -1254,9 +1447,16 @@ def extract_model_explanations(
     validation = validation_frame
     ranking_values = np.full(len(features), np.nan)
     ranking_status = "indisponivel"
-    oos_ok, oos_reason = _oos_validation_status(train_frame, validation)
-    if oos_ok and validation is not None and len(validation) >= 2 and response in validation and set(features).issubset(validation.columns):
-        result = permutation_importance(fitted, validation[features], validation[response], n_repeats=5, random_state=random_state, scoring="neg_mean_absolute_error")
+    if estimator is None:
+        oos_ok, oos_reason = False, "estimador final de previsao ausente"
+    elif target_column != "_target":
+        oos_ok, oos_reason = False, "alvo futuro _target ausente"
+    elif validation is None or validation.attrs.get("forecast_test_frame") is not True:
+        oos_ok, oos_reason = False, "forecast_test_frame final ausente"
+    else:
+        oos_ok, oos_reason = _oos_validation_status(train_frame, validation)
+    if oos_ok and validation is not None and len(validation) >= 2 and target_column in validation and set(features).issubset(validation.columns):
+        result = permutation_importance(fitted, validation[features], validation[target_column], n_repeats=5, random_state=random_state, scoring="neg_mean_absolute_error")
         ranking_values = result.importances_mean
         ranking_status = "oos_permutacao"
     ranking = pd.DataFrame([{**(coefficients[index] if index < len(coefficients) else {"feature": feature, "resposta": response}),
@@ -1383,6 +1583,7 @@ RESULT_TABLE_FILES = {
     "importancia": "importancia_variaveis.csv",
     "ranking": "ranking_dados_recomendados.csv",
     "features_excluidas": "features_excluidas.csv",
+    "cobertura_temporal": "cobertura_temporal_validacao.csv",
     "mapeamento_features": "mapeamento_features.csv",
     "diagnosticos": "diagnosticos_estatisticos.csv",
     "classificacao": "classificacao_validade.csv",
@@ -1393,7 +1594,50 @@ def _as_frame(value: object, columns: Sequence[str] = ()) -> pd.DataFrame:
     """Convert optional result values to a stable, serializable frame."""
     if isinstance(value, pd.DataFrame):
         return value.copy()
+    if isinstance(value, list):
+        return pd.DataFrame(list(value), columns=list(columns) if columns else None)
     return pd.DataFrame(columns=list(columns))
+
+
+def _periods_as_text(periods: object) -> str:
+    """Serialize validation periods so coverage decisions are auditable in CSV."""
+    if periods is None:
+        return ""
+    if isinstance(periods, (str, bytes)):
+        return str(periods)
+    try:
+        return ",".join(str(period) for period in periods)
+    except TypeError:
+        return str(periods)
+
+
+def _temporal_validation_audit(
+    response: str, metadata: Mapping[str, Any]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Make per-response coverage and predictor exclusions serializable."""
+    coverage = metadata.get("coverage_audit", {})
+    coverage_row = pd.DataFrame([{
+        "resposta": response,
+        "min_feature_non_null": coverage.get("min_feature_non_null"),
+        "dropped_rows_without_operational_coverage": coverage.get(
+            "dropped_rows_without_operational_coverage", 0
+        ),
+        "dropped_source_periods": _periods_as_text(
+            coverage.get("dropped_source_periods", ())
+        ),
+        "dropped_target_periods": _periods_as_text(
+            metadata.get("dropped_periods", coverage.get("dropped_target_periods", ()))
+        ),
+    }])
+    exclusions = _as_frame(metadata.get("excluded_features"))
+    if exclusions.empty:
+        return coverage_row, exclusions
+    exclusions = exclusions.copy()
+    exclusions["resposta"] = response
+    exclusions["origem_exclusao"] = "validacao_temporal"
+    if "campo_original" not in exclusions.columns:
+        exclusions["campo_original"] = exclusions.get("feature", pd.Series(index=exclusions.index, dtype=object))
+    return coverage_row, exclusions
 
 
 def save_results(results: Mapping[str, Any], output_dir: Path) -> None:
@@ -1503,12 +1747,13 @@ def write_final_report(results: Mapping[str, Any], output_dir: Path) -> Path:
             "", "Execucao interrompida antes do treinamento.",
             "Modelo vencedor: indisponivel.",
             "Nenhum resultado numerico de modelo foi produzido.",
-            "Limitacao: forneca um mapeamento explicito de GRUPO com --group-map-file.",
+            "Limitacao: corrija a auditoria; sem --group-map-file, GRUPO e derivado do TPLNR validado.",
         ])
     else:
         metrics = _as_frame(results.get("metricas"))
         classifications = _as_frame(results.get("classificacao"))
         predictions = _as_frame(results.get("previsoes"))
+        importance = _as_frame(results.get("importancia"))
         lines.extend(["", "Resultados por resposta:"])
         responses = sorted(set(metrics.get("resposta", pd.Series(dtype=object)).dropna().astype(str)))
         for response in responses:
@@ -1529,6 +1774,24 @@ def write_final_report(results: Mapping[str, Any], output_dir: Path) -> Path:
             classification = classifications[classifications.get("resposta", pd.Series(dtype=object)).astype(str).eq(response)] if not classifications.empty and "resposta" in classifications else pd.DataFrame()
             if not classification.empty:
                 lines.append(f"  classificacao: {classification.iloc[0].get('classificacao', 'indisponivel')}")
+        lines.extend([
+            "", "Importância preditiva:",
+            "A importância preditiva indica quanto uma variável contribuiu para a previsão; não estabelece relação de causa e efeito com a resposta.",
+            "Somente features com status_semantico=confirmado têm significado operacional confirmado.",
+        ])
+        if importance.empty:
+            lines.append("Nenhuma importância preditiva foi disponibilizada.")
+        else:
+            for _, item in importance.iterrows():
+                feature = item.get("feature", "desconhecida")
+                status = str(item.get("status_semantico", "nao_confirmado")).lower()
+                if status != "confirmado":
+                    raw_field = item.get("campo_original", feature)
+                    transformation = item.get("transformacao", "nao informada")
+                    lines.append(
+                        f"- variável {feature} contribuiu para a previsão; campo bruto: {raw_field}; "
+                        f"transformação: {transformation}; significado operacional não confirmado."
+                    )
         lines.append("Limitacoes: consulte features_excluidas.csv, diagnosticos_estatisticos.csv e o status_semantico das features.")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
@@ -1545,7 +1808,7 @@ def _indicator_analysis_frame(indicators: pd.DataFrame) -> pd.DataFrame:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run audit, explicit mapping, temporal modeling, persistence and reporting."""
+    """Run audit, group mapping, temporal modeling, persistence and reporting."""
     config = parse_args(argv)
     logger = _configure_logging(config.output_dir)
     results: dict[str, Any] = {"status": "failed", "audit": pd.DataFrame(columns=AUDIT_COLUMNS)}
@@ -1572,18 +1835,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             save_results(results, config.output_dir)
             write_final_report(results, config.output_dir)
             return 1
-        if config.group_map_file is None:
-            raise _mapping_error(
-                "mapeamento de GRUPO obrigatorio para a execucao principal; "
-                "forneca --group-map-file sem inferir grupos"
-            )
         try:
             combined_indicators = pd.concat(normalized_indicators.values(), ignore_index=True)
-            mapped_indicators, mapped_operational = build_group_mapping(combined_indicators, operational, config.group_map_file)
+            if config.group_map_file is not None:
+                mapped_indicators, mapped_operational = build_group_mapping(
+                    combined_indicators, operational, config.group_map_file
+                )
+            else:
+                mapped_indicators, mapped_operational = build_hierarchy_group_mapping(
+                    combined_indicators, operational
+                )
         except DataValidationError as exc:
+            hierarchy_mapping = config.group_map_file is None
+            correction = getattr(exc, "correction", "")
+            if hierarchy_mapping and not correction:
+                correction = "forneca TPLNR preenchido, com GRUPO e EQUIPAMENTO nos dois segmentos finais"
             mapping_diagnostic = pd.DataFrame(
-                [{"fonte": "mapeamento", "categoria": "semantica", "campo": "GRUPO",
-                  "valor": getattr(exc, "correction", ""), "severidade": "ERROR", "mensagem": str(exc)}],
+                [{
+                    "fonte": "hierarquia_tplnr" if hierarchy_mapping else "mapeamento",
+                    "categoria": "semantica",
+                    "campo": "TPLNR" if hierarchy_mapping else "GRUPO",
+                    "valor": correction,
+                    "severidade": "ERROR",
+                    "mensagem": str(exc),
+                }],
                 columns=AUDIT_COLUMNS,
             )
             audit = pd.concat([audit, mapping_diagnostic], ignore_index=True)
@@ -1609,6 +1884,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         diagnostic_frames: list[pd.DataFrame] = []
         coefficient_frames: list[pd.DataFrame] = []
         ranking_frames: list[pd.DataFrame] = []
+        coverage_frames: list[pd.DataFrame] = []
+        temporal_exclusion_frames: list[pd.DataFrame] = []
         classification_rows: list[dict[str, object]] = []
         response_columns = [
             column for column in analysis_indicators.columns
@@ -1616,7 +1893,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         ]
         for response in response_columns:
             try:
-                predictions, _, metadata = run_temporal_validation(analytic, response, config)
+                predictions, _, metadata = run_temporal_validation(
+                    analytic,
+                    response,
+                    config,
+                    predictor_columns=lag_metadata["feature"].tolist(),
+                )
+                coverage_frame, temporal_exclusions = _temporal_validation_audit(response, metadata)
+                coverage_frames.append(coverage_frame)
+                if not temporal_exclusions.empty:
+                    temporal_exclusion_frames.append(temporal_exclusions)
                 response_metrics = pd.DataFrame(metadata.get("metricas", []))
                 if not response_metrics.empty:
                     metric_frames.append(response_metrics)
@@ -1626,11 +1912,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 diagnostic["resposta"] = response
                 diagnostic_frames.append(diagnostic)
                 test_periods = set(metadata.get("test_target_periods", ()))
-                train_frame = analytic[~analytic["MES"].isin(test_periods)].copy() if test_periods else analytic.iloc[0:0].copy()
-                validation_frame = analytic[analytic["MES"].isin(test_periods)].copy()
-                validation_frame.attrs["fora_amostra"] = True
+                fallback_train_frame = analytic[~analytic["MES"].isin(test_periods)].copy() if test_periods else analytic.iloc[0:0].copy()
+                fallback_validation_frame = analytic[analytic["MES"].isin(test_periods)].copy()
+                train_frame = metadata.get("forecast_train_frame", fallback_train_frame)
+                validation_frame = metadata.get("forecast_test_frame", fallback_validation_frame)
+                final_estimators = metadata.get("final_estimators", {})
                 coefficients, ranking = extract_model_explanations(
-                    train_frame, predictions, response, validation_frame=validation_frame,
+                    train_frame,
+                    predictions,
+                    response,
+                    validation_frame=validation_frame,
+                    estimator=final_estimators.get("elastic_net") if isinstance(final_estimators, Mapping) else None,
+                    response_column=metadata.get("forecast_target_column"),
                     random_state=config.random_state,
                 )
                 coefficient_frames.append(coefficients)
@@ -1649,7 +1942,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "coeficientes": pd.concat(coefficient_frames, ignore_index=True) if coefficient_frames else pd.DataFrame(),
             "importancia": pd.concat(ranking_frames, ignore_index=True) if ranking_frames else pd.DataFrame(),
             "ranking": pd.concat(ranking_frames, ignore_index=True) if ranking_frames else pd.DataFrame(),
-            "features_excluidas": excluded,
+            "features_excluidas": pd.concat(
+                [excluded, *temporal_exclusion_frames], ignore_index=True, sort=False
+            ) if temporal_exclusion_frames else excluded,
+            "cobertura_temporal": pd.concat(coverage_frames, ignore_index=True) if coverage_frames else pd.DataFrame(),
             "mapeamento_features": lag_metadata,
             "diagnosticos": pd.concat(diagnostic_frames, ignore_index=True) if diagnostic_frames else pd.DataFrame(),
             "classificacao": pd.DataFrame(classification_rows),
