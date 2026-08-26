@@ -84,13 +84,20 @@ def audit_data_quality(sources: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     "Campo constante",
                 )
             key = _column_key(column)
-            numeric = pd.to_numeric(
-                data[column].astype("string").str.replace(",", ".", regex=False), errors="coerce"
-            )
-            non_empty = data[column].notna() & data[column].astype("string").str.strip().ne("")
-            clearly_numeric = non_empty.any() and numeric[non_empty].notna().mean() >= 0.95
+            if pd.api.types.is_numeric_dtype(data[column]):
+                numeric = data[column]
+                non_empty = data[column].notna()
+                clearly_numeric = non_empty.any()
+                invalid_values: list[str] = []
+            else:
+                str_s = data[column].astype("string")
+                numeric = pd.to_numeric(
+                    str_s.str.replace(",", ".", regex=False), errors="coerce"
+                )
+                non_empty = data[column].notna() & str_s.str.strip().ne("")
+                clearly_numeric = non_empty.any() and numeric[non_empty].notna().mean() >= 0.95
+                invalid_values = data.loc[non_empty & numeric.isna(), column].astype(str).tolist() if (key in _INDICATOR_NUMERIC_COLUMNS or clearly_numeric) else []
             if key in _INDICATOR_NUMERIC_COLUMNS or clearly_numeric:
-                invalid_values = data.loc[non_empty & numeric.isna(), column].astype(str).tolist()
                 if column not in recorded_coercions:
                     add(
                         source,
@@ -110,12 +117,13 @@ def audit_data_quality(sources: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                         "Valores negativos encontrados",
                     )
                 if key.startswith(("DF", "UF", "RO")) and (numeric > 100).any():
+                    severity = "ERROR" if key in _INDICATOR_NUMERIC_COLUMNS else "WARNING"
                     add(
                         source,
                         "impossiveis",
                         column,
                         int((numeric > 100).sum()),
-                        "ERROR",
+                        severity,
                         "Percentual acima de 100",
                     )
 

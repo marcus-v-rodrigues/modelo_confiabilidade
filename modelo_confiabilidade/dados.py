@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 import unicodedata
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -50,9 +51,21 @@ def _read_required(
             raise error
         try:
             if reader == "excel":
-                loaded[source] = pd.read_excel(path, sheet_name="Export", **kwargs)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        category=UserWarning,
+                        module="openpyxl",
+                    )
+                    loaded[source] = pd.read_excel(path, sheet_name="Export", **kwargs)
             else:
-                loaded[source] = pd.read_csv(path, sep=";", encoding="utf-8-sig", **kwargs)
+                loaded[source] = pd.read_csv(
+                    path,
+                    sep=";",
+                    encoding="utf-8-sig",
+                    low_memory=False,
+                    **kwargs,
+                )
         except Exception as exc:
             detail = "aba Export" if reader == "excel" else "separador ';' e codificacao UTF-8-SIG"
             error = DataValidationError(
