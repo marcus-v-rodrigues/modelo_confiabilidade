@@ -274,7 +274,7 @@ def test_normalize_indicator_frame_keeps_operational_text_columns() -> None:
     result = normalize_indicator_frame(frame, "caminhao")
 
     assert result["DESCRIÇÃO"].tolist() == ["123 texto"]
-    assert result["DESCRIÇÃO"].dtype == object
+    assert pd.api.types.is_string_dtype(result["DESCRIÇÃO"]) or result["DESCRIÇÃO"].dtype == object
 
 
 def test_normalize_indicator_frame_preserves_invalid_coercion_event() -> None:

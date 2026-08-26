@@ -1,80 +1,52 @@
-# Dicionário de Correspondência
+# Dicionário de Dados e Metadados de Features
 
-Este dicionário compara os nomes usados pelo notebook com os campos encontrados
-nos arquivos atuais. `Direto` significa que o campo existe com o mesmo nome;
-`derivado` indica que pode exigir transformação; `indefinido` significa que não
-há equivalência confirmada apenas pela inspeção dos nomes.
+Este documento apresenta a estrutura de metadados, convenções de nomenclatura e catálogo de variáveis do pipeline preditivo de confiabilidade.
 
-Os nomes operacionais brutos são mantidos no pipeline. Em especial,
-`IMAINDI*` recebe `status_semantico=nao_confirmado` até validação de negócio;
-não se cria um alias AMS, AMC, APR ou backlog apenas pelo nome. A importância
-do modelo é preditiva e não afirma causalidade.
+---
 
-## Indicadores de Confiabilidade
+## 1. Convenções de Nomenclatura
 
-| Notebook | Arquivo atual | Status | Observação |
-|---|---|---|---|
-| `ANO MÊS` | `ANO MÊS` | Direto | Precisa ser convertido para uma data mensal no fluxo. |
-| `EQUIPAMENTO` | `EQUIPAMENTO` | Direto | Presente nos quatro XLSX. |
-| `DF (REAL)` | `DF (REAL)` | Direto | Usado como resposta. |
-| `MTBF (REAL)` | `MTBF (REAL)` | Direto | Usado como resposta. |
-| `MTBS (REAL)` | `MTBS (REAL)` | Direto | Usado como resposta. |
-| `MTTR` | `MTTR` | Direto | Usado como resposta. |
-| `NIC (VMINA)` | `NIC (VMINA)` | Direto | Usado como resposta. |
-| `GRUPO` | Não existe nos XLSX | Derivado | Regra normal: penúltimo segmento do `TPLNR` operacional (`TPLNR[-2]`). |
+Para garantir total rastreabilidade entre os dados brutos e os preditores nos modelos de Machine Learning, as variáveis geradas seguem uma convenção determinística:
 
-## Chaves Temporais e de Equipamento
+### Padrão de Nomenclatura de Features
+```text
+<FONTE>__<CAMPO_ORIGINAL>_<AGREGACAO>_lag_<N>
+```
 
-| Notebook | Atual | Status | Observação |
-|---|---|---|---|
-| `TPLNR05` | `TPLNR` | Derivado | Regra normal: `GRUPO=TPLNR[-2]` e `EQUIPAMENTO=TPLNR[-1]`; `--group-map-file` é apenas override explícito opcional. |
-| `CALMONTH-Calendar_year_month` | `CALMONTH` | Derivado | Requer padronização para `ANO MÊS`. |
-| `ANO MÊS` | `YEAR` + `CALMONTH` | Derivado | Pode ser reconstruído, preservando zeros e formato `YYYYMM`. |
+* **`<FONTE>`**: Nome da fonte operacional de origem (`AMS_Contador`, `AMS_Calendario`, `AMC_ITABIRA`, `APR_ITABIRA`, `Backlog_mina_itabira`).
+* **`<CAMPO_ORIGINAL>`**: Nome do campo extraído diretamente do arquivo SAP (ex.: `IMAINDI383`, `IMAINDI64`, `IMAINDI37`).
+* **`<AGREGACAO>`**: Função de agregação mensal utilizada (`sum`, `mean`, `count`, etc.).
+* **`lag_<N>`**: Quantidade de meses de defasagem histórica ($N \in [1, \text{max\_lag}]$).
 
-## AMS
+---
 
-| Notebook | Atual | Status | Observação |
-|---|---|---|---|
-| `AMS_00H` | Não identificado diretamente | Indefinido | Definir se é campo bruto ou cálculo. |
-| Campo bruto preservado | `IMAINDI383` | Indefinido | Não atribuir alias operacional antes de confirmar significado e agregação. |
-| Campo bruto preservado | `IMAINDI384` | Indefinido | Não atribuir alias operacional antes de confirmar significado e agregação. |
-| `AMS_PREVISTAS` | Contagem agregada de ordens | Derivado | O notebook espera uma tabela já agregada. |
-| `AMS_EXECUTADAS` | Contagem agregada de fechadas | Derivado | O notebook calcula pendentes por diferença. |
+## 2. Metadados de Features (`mapeamento_features`)
 
-## AMC
+Cada feature gerada no pipeline possui uma linha de metadados registrada na base e nos relatórios de auditoria com os seguintes atributos:
 
-| Notebook | Atual | Status | Observação |
-|---|---|---|---|
-| `AMC_00I` | Não identificado diretamente | Indefinido | Não assumir equivalência com outro indicador. |
-| Campo bruto preservado | `IMAINDI189_ACTUAL_NA` ou relacionados | Indefinido | Não atribuir alias operacional antes da validação da regra usada pela tabela original. |
-| `AMC_PREVISTAS` | Contagem agregada de notificações | Derivado | Depende dos filtros de período e status. |
-| `AMC_EXECUTADAS` | Previstas × `AMC_00I / 100` | Derivado | Fórmula existente no notebook. |
+| Atributo | Descrição | Exemplo |
+| :--- | :--- | :--- |
+| **`feature`** | Nome final da variável no dataset analítico | `AMS_Contador__IMAINDI383_sum_lag_1` |
+| **`fonte`** | Arquivo operacional de origem | `AMS_Contador` |
+| **`campo_original`** | Campo de origem no SAP | `IMAINDI383` |
+| **`transformacao`** | Função aplicada na agregação | `sum` |
+| **`lag`** | Defasagem temporal em meses | `1` |
+| **`risco_vazamento`** | Avaliação de risco de vazamento temporal (`baixo`, `medio`, `alto`, `confirmado`) | `baixo` |
+| **`status_semantico`** | Validação de negócio do significado (`confirmado`, `nao_confirmado`) | `nao_confirmado` |
 
-## APR
+---
 
-| Notebook | Atual | Status | Observação |
-|---|---|---|---|
-| `.APR` | `IMAINDI64` e relacionados | Indefinido | O nome parecido não comprova a mesma definição. |
-| `IMAINDI64_TOT` | `IMAINDI64` | Indefinido | O campo atual não possui o sufixo `_TOT`. |
-| `APR_PREVISTAS` | Total planejado agregado | Derivado | Requer definição do universo e dos filtros. |
-| `APR_EXECUTADAS` | Previstas × `APR / 100` | Derivado | Fórmula existente no notebook. |
+## 3. Classificação de Status Semântico
 
-## Backlog
+* **`confirmado`**: O campo teve sua fórmula, regras de filtro, unidade de medida e significado de engenharia formalmente homologados pela equipe técnica.
+* **`nao_confirmado`**: O campo é tratado pelo modelo puramente como um sinal estatístico/numérico. Sua importância preditiva é medida matematicamente, mas o pipeline **não assume aliases arbitrários** (como chamar `IMAINDI383` de `AMS_00H` sem validação explícita).
 
-| Notebook | Atual | Status | Observação |
-|---|---|---|---|
-| `HH_EM CARTEIRA` | Indicadores `IMAINDI*` | Indefinido | Não há campo com o mesmo nome. |
-| `hh_em_ordens_vencidas` | `IMAINDI37`, `IMAINDI38` ou relacionados | Indefinido | Exige validação da regra de vencimento. |
-| YPM/YCM | Indicadores de backlog atuais | Indefinido | Não há correspondência nominal confirmada. |
-| Corretiva | Indicadores de backlog atuais | Indefinido | Exige filtro por tipo de ordem. |
-| Prioridade 1/2 | `PRIOK` e indicadores relacionados | Derivado | A prioridade existe, mas a métrica de horas vencidas precisa ser definida. |
-| `BACKLOG_POR_ATIVO` | Backlog agregado / `QTD_ATIVOS` | Derivado | Fórmula existente no notebook. |
-| `BACKLOG_DELTA` | Variação mensal | Derivado | Calculado após agregação por grupo. |
-| `BACKLOG_CRESCIMENTO` | `pct_change()` mensal | Derivado | Valores infinitos são substituídos por `NaN` no agregado. |
+---
 
-## Convenções de Status
+## 4. Chaves Primárias e Alinhamento
 
-- **Direto:** nome e conceito estão presentes na fonte.
-- **Derivado:** requer renomeação, combinação, filtro ou agregação.
-- **Indefinido:** o nome atual pode ser relacionado, mas a regra de negócio não
-  foi confirmada.
+| Chave | Tipo | Descrição |
+| :--- | :--- | :--- |
+| **`GRUPO`** | `str` | Família/grupo operacional de equipamentos derivado do penúltimo segmento do `TPLNR`. |
+| **`EQUIPAMENTO`** | `str` | Identificador único do ativo derivado do último segmento do `TPLNR` e presente nos XLSX. |
+| **`MES` / `ANO MÊS`** | `Period[M]` | Período mensal de apuração dos dados no formato `YYYY-MM`. |

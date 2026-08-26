@@ -1,80 +1,99 @@
-# Documentação da Análise AMS e Confiabilidade
+# Documentação do Modelo de Previsão de Confiabilidade (`modelo_confiabilidade`)
 
-Esta pasta registra o que o notebook faz, o papel de cada fonte e os conflitos que precisam ser resolvidos para executar a análise com os arquivos atuais.
+Bem-vindo à documentação técnica oficial do pacote **`modelo_confiabilidade`**, desenvolvido para modelagem preditiva, auditoria de dados e diagnóstico estatístico dos indicadores mensais de confiabilidade de frotas industriais e de mineração.
 
-## Documentos
+---
 
-- [Fluxo do notebook](notebook.md): entradas, preparação, métricas derivadas,
-  agregações, lags, correlações, regressões e limitações.
-- [Arquivos de indicadores](indicadores.md): os quatro XLSX por universo,
-  incluindo o arquivo de caminhão corrigido.
-- [Fontes operacionais](operacionais.md): AMS, calendário AMS, AMC, APR e
-  backlog.
-- [Conflitos](conflitos.md): diferenças técnicas e semânticas entre o notebook
-  e os arquivos atuais.
-- [Diferenças entre bases](diferencas-bases.md): comparação entre os arquivos
-  históricos e as bases novas.
-- [Dicionário de correspondência](dicionario.md): campos diretos, derivados e
-  ainda indefinidos.
+## 1. Visão Geral do Sistema
 
-## Arquivos Relacionados
+O objetivo do sistema é **prever os indicadores de confiabilidade do próximo mês ($t+1$)** por grupo de equipamentos com base nos dados operacionais de manutenção observados no mês atual ($t$) e em seu histórico recente ($t-1 \dots t-6$).
 
-- [`../Correlacao_AMS_DF_frota.ipynb`](../Correlacao_AMS_DF_frota.ipynb)
-- `INDICADORES MENSAIS POR UNIVERSO caminhao.xlsx`
-- `INDICADORES MENSAIS POR UNIVERSO carga.xlsx`
-- `INDICADORES MENSAIS POR UNIVERSO perfuracao.xlsx`
-- `INDICADORES MENSAIS POR UNIVERSO infra.xlsx`
-- `AMS_Contador.csv`
-- `AMS_Calendario.csv`
-- `AMC_ITABIRA.csv`
-- `APR_ITABIRA.csv`
-- `Backlog_mina_itabira.csv`
-- `../Correlacoes_AMS_Indicadores.pdf`
+```mermaid
+graph LR
+    subgraph Entrada
+        XLSX["4x XLSX Confiabilidade<br/>(Caminhão, Carga, Perfuração, Infra)"]
+        CSV["5x CSVs Operacionais<br/>(AMS, AMC, APR, Backlog)"]
+    end
 
-## Estado Atual
+    subgraph Pipeline ["Pacote modelo_confiabilidade"]
+        AUD["1. Auditoria e Quality Gates"]
+        TPLNR["2. Derivação TPLNR<br/>(EQUIPAMENTO -> GRUPO)"]
+        FEAT["3. Agregações e Lags (t-1 a t-6)"]
+        ML["4. Modelagem Temporal OOS<br/>(Elastic Net, Random Forest, Baseline)"]
+        DIAG["5. Diagnósticos Estatísticos & VIF"]
+    end
 
-Os quatro XLSX estão disponíveis e estruturalmente consistentes. O arquivo de caminhão está íntegro, possui a aba `Export` e cobre `202501`–`202608`.
+    subgraph Saída
+        REP["Relatório Executivo (.txt)"]
+        DAT["Bases e Métricas (.csv)"]
+        IMG["Gráficos e Diagnósticos (.png)"]
+    end
 
-Os CSVs atuais são fontes detalhadas, enquanto o notebook espera tabelas já normalizadas e agregáveis. Por isso, a análise ainda requer uma camada de transformação para chaves, períodos e métricas AMS, AMC, APR e backlog.
+    XLSX --> AUD
+    CSV --> AUD
+    AUD --> TPLNR --> FEAT --> ML --> DIAG
+    DIAG --> REP
+    DIAG --> DAT
+    DIAG --> IMG
+```
 
-Os campos operacionais brutos, inclusive os que começam por `IMAINDI`, são
-preservados com seus nomes de origem. Eles têm `status_semantico=nao_confirmado`
-até que uma regra de negócio os confirme; o pipeline não cria aliases
-semânticos como AMS, AMC, APR ou backlog a partir do nome de uma coluna.
+---
 
-## Validação preditiva
+## 2. Indicadores de Confiabilidade Modelados
 
-O pipeline executável será disponibilizado pelo pacote `modelo_confiabilidade`:
+O modelo prevê cinco variáveis-alvo fundamentais para o planejamento de manutenção:
+* **`DF (REAL)`**: Disponibilidade Física Real.
+* **`MTBF (REAL)`**: Tempo Médio Entre Falhas (*Mean Time Between Failures*).
+* **`MTBS (REAL)`**: Tempo Médio Entre Paradas (*Mean Time Between Stops*).
+* **`MTTR`**: Tempo Médio Para Reparo (*Mean Time To Repair*).
+* **`NIC (VMINA)`**: Número de Intervenções Corretivas.
+
+---
+
+## 3. Guia Rápido de Execução
+
+O pacote é executado via linha de comando no ambiente Python:
 
 ```bash
+# Execução padrão
 python -m modelo_confiabilidade \
   --input-dir ./bases \
-  --output-dir ./resultados-auditoria \
+  --output-dir ./resultados \
   --test-months 3 \
   --max-lag 6
 ```
 
-Sem `--group-map-file`, o pipeline deriva `GRUPO` e `EQUIPAMENTO` dos dois
-últimos segmentos de cada `TPLNR` operacional: `GRUPO=TPLNR[-2]` e
-`EQUIPAMENTO=TPLNR[-1]`. O `TPLNR` deve estar preenchido, conter ao menos dois
-segmentos não vazios e associar cada equipamento a somente um grupo. A
-derivação também precisa cobrir os equipamentos dos indicadores.
+Para ver todos os parâmetros e opções disponíveis:
+```bash
+python -m modelo_confiabilidade --help
+```
 
-`--group-map-file ./config/grupos.csv` é um override opcional e compatível para
-casos em que a regra hierárquica não deve ser usada. Esse arquivo deve conter
-uma chave `EQUIPAMENTO` ou `TPLNR` e a coluna `GRUPO`.
+---
 
-Diante de erro estrutural, de hierarquia ou do mapeamento explícito, o pipeline
-roda somente a auditoria, grava `auditoria_qualidade.csv`,
-`relatorio_qualidade_dados.csv`, o log e `relatorio_final.txt`, retorna código
-diferente de zero e não produz métricas de ML.
+## 4. Estrutura da Documentação
 
-As saídas de uma execução completa incluem a base analítica, métricas,
-previsões fora da amostra, coeficientes, importância, ranking de dados,
-features excluídas, metadata, diagnósticos, classificação, relatório e
-gráficos. A importância é preditiva; o significado AMS/AMC/APR/backlog só é
-apresentado como confirmado quando houver configuração semântica explícita.
-Ela mostra contribuição para a previsão, não causalidade sobre o indicador de
-confiabilidade. A janela com cobertura operacional comum aos CSVs atuais é
-`202505`–`202608`; meses anteriores dos XLSX ficam fora da modelagem quando não
-possuem cobertura operacional suficiente.
+A documentação está dividida nos seguintes tópicos especializados:
+
+1. **[Fontes de Indicadores de Confiabilidade](indicadores.md)**: Detalhamento das quatro pastas de trabalho XLSX, universos atendidos, abas `Export` e variáveis de resposta.
+2. **[Fontes Operacionais de Manutenção](operacionais.md)**: Características dos cinco CSVs brutos do SAP (AMS Contador, AMS Calendário, AMC, APR e Backlog) e estratégias de agregação.
+3. **[Pipeline de Previsão Temporal e Modelagem](pipeline_modelagem.md)**: Fluxo de dados, derivação de grupos por `TPLNR`, engenharia de lags ($t-1$ a $t-6$), proteção anti-vazamento e algoritmos de ML.
+4. **[Diagnósticos Estatísticos e Validação](diagnosticos_e_validacao.md)**: Critérios de validação fora da amostra (OOS), testes de resíduos, VIF, importância por permutação e classificação (`VALIDO`, `EXPLORATORIO`, `INVALIDO`).
+5. **[Guia de Execução CLI e Catálogo de Saídas](cli_e_resultados.md)**: Referência de todas as flags da CLI, modos de execução (completo vs audit-only) e dicionário de todos os arquivos gerados.
+6. **[Dicionário de Dados e Metadados](dicionario.md)**: Nomenclatura das features geradas, convenções de status semântico e chaves de relacionamento.
+7. **[Evolução Arquitetural e Contexto](evolucao_e_contexto.md)**: Registro histórico da transição de um estudo exploratório inicial em notebook para uma arquitetura robusta de aprendizado de máquina.
+
+---
+
+## 5. Estrutura do Pacote de Código
+
+```text
+modelo_confiabilidade/
+├── __init__.py           # Identificador do pacote
+├── __main__.py           # Ponto de entrada CLI e orquestração do pipeline
+├── configuracao.py       # Contrato de configuração (Config, parse_args, logs)
+├── dados.py              # Leitura, normalização, hierarquia TPLNR, lags e features
+├── auditoria.py          # Quality gates, auditoria estrutural e de coerção
+├── modelagem.py          # Pipelines Elastic Net/Random Forest, baseline e validação temporal
+├── diagnosticos.py       # VIF, testes de resíduos, importância OOS e classificação
+└── relatorios.py         # Persistência CSV, gráficos PNG e relatório executivo TXT
+```

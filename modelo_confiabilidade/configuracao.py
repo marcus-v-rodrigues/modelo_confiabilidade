@@ -87,21 +87,93 @@ def _non_negative_float(value: str) -> float:
 
 def parse_args(argv: Sequence[str] | None = None) -> Config:
     """Parse command-line arguments and return an immutable configuration."""
-    parser = argparse.ArgumentParser(description="Pipeline de validacao preditiva dos indicadores de confiabilidade.")
-    parser.add_argument("--input-dir", type=Path, default=Path("./bases"))
-    parser.add_argument("--output-dir", type=Path, default=Path("./resultados"))
-    parser.add_argument("--test-months", type=_positive_int, default=3)
-    parser.add_argument("--max-lag", type=_positive_int, default=6)
-    parser.add_argument("--random-state", type=_positive_int, default=42)
-    parser.add_argument("--group-map-file", type=Path, default=None)
-    parser.add_argument("--min-train-rows", type=_positive_int, default=30)
-    parser.add_argument("--min-test-rows", type=_positive_int, default=10)
-    parser.add_argument("--min-feature-non-null", type=_non_negative_float, default=0.5)
-    parser.add_argument("--min-test-r2", type=float, default=0.0)
-    parser.add_argument("--max-test-mape", type=_non_negative_float, default=100.0)
-    parser.add_argument("--min-baseline-improvement", type=float, default=0.0)
-    parser.add_argument("--max-metric-cv", type=_non_negative_float, default=1.0)
-    parser.add_argument("--max-vif", type=_non_negative_float, default=10.0)
+    parser = argparse.ArgumentParser(
+        description="Pipeline de modelagem e validacao preditiva dos indicadores de confiabilidade."
+    )
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=Path("./bases"),
+        help="Diretorio de entrada contendo os 4 XLSX de indicadores e 5 CSVs operacionais (default: ./bases).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("./resultados"),
+        help="Diretorio de saida para salvar relatorios, auditoria, metricas e graficos (default: ./resultados).",
+    )
+    parser.add_argument(
+        "--test-months",
+        type=_positive_int,
+        default=3,
+        help="Numero de meses finais reservados para o teste fora da amostra (OOS) (default: 3).",
+    )
+    parser.add_argument(
+        "--max-lag",
+        type=_positive_int,
+        default=6,
+        help="Numero maximo de defasagens temporais (lags em meses) para as features operacionais (default: 6).",
+    )
+    parser.add_argument(
+        "--random-state",
+        type=_positive_int,
+        default=42,
+        help="Semente pseudoaleatoria para reprodutibilidade dos modelos e importancias (default: 42).",
+    )
+    parser.add_argument(
+        "--group-map-file",
+        type=Path,
+        default=None,
+        help="Caminho opcional para CSV de mapeamento explicito (EQUIPAMENTO/TPLNR -> GRUPO). Se omitido, deriva via TPLNR (default: None).",
+    )
+    parser.add_argument(
+        "--min-train-rows",
+        type=_positive_int,
+        default=30,
+        help="Tamanho amostral minimo no conjunto de treino para permitir o treinamento do modelo (default: 30).",
+    )
+    parser.add_argument(
+        "--min-test-rows",
+        type=_positive_int,
+        default=10,
+        help="Numero minimo de observacoes no conjunto de teste OOS para validacao estatistica (default: 10).",
+    )
+    parser.add_argument(
+        "--min-feature-non-null",
+        type=_non_negative_float,
+        default=0.5,
+        help="Fracao minima de valores nao nulos no treino para inclusao de uma feature preditora (default: 0.5).",
+    )
+    parser.add_argument(
+        "--min-test-r2",
+        type=float,
+        default=0.0,
+        help="R2 minimo no conjunto de teste OOS exigido para classificar o modelo como valido (default: 0.0).",
+    )
+    parser.add_argument(
+        "--max-test-mape",
+        type=_non_negative_float,
+        default=100.0,
+        help="Limite maximo aceitavel de MAPE (%%) no teste OOS para o modelo ser considerado valido (default: 100.0).",
+    )
+    parser.add_argument(
+        "--min-baseline-improvement",
+        type=float,
+        default=0.0,
+        help="Melhoria percentual minima de MAE em relacao ao baseline de persistencia exigida (default: 0.0).",
+    )
+    parser.add_argument(
+        "--max-metric-cv",
+        type=_non_negative_float,
+        default=1.0,
+        help="Coeficiente de variacao maximo das metricas entre janelas temporais para garantir estabilidade (default: 1.0).",
+    )
+    parser.add_argument(
+        "--max-vif",
+        type=_non_negative_float,
+        default=10.0,
+        help="Fator de Inflacao da Variancia (VIF) maximo tolerado antes de sinalizar multicolinearidade (default: 10.0).",
+    )
     args = parser.parse_args(argv)
     return Config(**vars(args))
 

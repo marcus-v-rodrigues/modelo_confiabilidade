@@ -1,64 +1,68 @@
-# Arquivos de Indicadores
+# Fontes de Indicadores de Confiabilidade
 
-## Papel na Análise
+Este documento detalha os arquivos de indicadores mensais de confiabilidade da frota, suas variáveis-alvo, estrutura e requisitos de qualidade.
 
-As planilhas fornecem os indicadores mensais de confiabilidade por equipamento.
-O notebook usa os quatro universos em conjunto para formar a tabela `df`.
+---
 
-## Arquivos Atuais
+## 1. Visão Geral das Fontes
 
-| Arquivo | Universo | Dados aproximados | Período |
-|---|---|---:|---|
-| `INDICADORES MENSAIS POR UNIVERSO caminhao.xlsx` | Caminhão | 1.204 registros | `202501`–`202608` |
-| `INDICADORES MENSAIS POR UNIVERSO carga.xlsx` | Carga | 243 registros | `202501`–`202608` |
-| `INDICADORES MENSAIS POR UNIVERSO perfuracao.xlsx` | Perfuração | 273 registros | `202501`–`202608` |
-| `INDICADORES MENSAIS POR UNIVERSO infra.xlsx` | Infraestrutura | 1.295 registros | `202501`–`202608` |
+Os indicadores de confiabilidade são disponibilizados em quatro pastas de trabalho Excel (`.xlsx`), correspondentes aos quatro universos de equipamentos da mina:
 
-Os quatro arquivos possuem a aba `Export` e a mesma estrutura de 26 colunas.
-O arquivo de caminhão foi validado como XLSX íntegro. Ele possui 1.206 linhas
-físicas: cabeçalho, registros, uma linha `Total`, uma linha em branco e uma
-linha com filtros aplicados.
+| Arquivo | Universo | Período Típico | Colunas | Registros Aprox. |
+| :--- | :--- | :--- | :---: | :---: |
+| `INDICADORES MENSAIS POR UNIVERSO caminhao.xlsx` | Caminhão Fora-de-Estrada | `202501`–`202608` | 26 | ~1.200 |
+| `INDICADORES MENSAIS POR UNIVERSO carga.xlsx` | Equipamentos de Carga | `202501`–`202608` | 26 | ~240 |
+| `INDICADORES MENSAIS POR UNIVERSO perfuracao.xlsx` | Perfuratrizes | `202501`–`202608` | 26 | ~270 |
+| `INDICADORES MENSAIS POR UNIVERSO infra.xlsx` | Equipamentos de Infraestrutura | `202501`–`202608` | 26 | ~1.290 |
 
-## Colunas
+---
 
-```text
-ANO MÊS, EQUIPAMENTO,
-DF (META), DF (REAL),
-MTBF (META), MTBF (REAL),
-MTBS (META), MTBS (REAL),
-MTTR (META), MTTR,
-NIC (META), NIC (VMINA),
-UF (META), UF (REAL),
-RO (META), RO (REAL),
-HO (REAL),
-HT (META), HT (REAL),
-HM (META), HM (REAL),
-HMC (META), HMC (REAL),
-MPS (REAL), MPNS (REAL), HAC (REAL)
-```
+## 2. Variáveis-Alvo Modeladas
 
-O notebook consome diretamente as seguintes colunas:
+O pipeline modela e prevê cinco indicadores operacionais de confiabilidade para o mês subsequente ($t+1$):
 
-```text
-ANO MÊS
-EQUIPAMENTO
-DF (REAL)
-MTBF (REAL)
-MTBS (REAL)
-MTTR
-NIC (VMINA)
-```
+1. **`DF (REAL)` — Disponibilidade Física Real:**
+   * Proporção de tempo em que o equipamento esteve mecanicamente disponível para operação.
+   * Fórmula conceitual: $(HT - (HMC + HM)) / HT$ ou equivalente apurado pela engenharia.
+2. **`MTBF (REAL)` — Mean Time Between Failures:**
+   * Tempo médio de operação entre falhas mecânicas/elétricas corretivas.
+3. **`MTBS (REAL)` — Mean Time Between Stops:**
+   * Tempo médio entre paradas (incluindo corretivas e preventivas).
+4. **`MTTR` — Mean Time To Repair:**
+   * Tempo médio de reparo por intervenção de manutenção.
+5. **`NIC (VMINA)` — Número de Intervenções Corretivas:**
+   * Volume total de manutenções corretivas não planejadas registradas no período.
 
-As colunas de meta e os demais indicadores ficam disponíveis, mas não entram na
-base de correlação descrita no notebook.
+---
 
-## Limpeza Necessária
+## 3. Estrutura e Formatação dos Arquivos
 
-As linhas `Total`, em branco e de filtros não devem ser tratadas como
-equipamentos. O notebook original esperava arquivos com nomes genéricos, mas os
-arquivos atuais são separados explicitamente por universo. A substituição dos
-nomes precisa preservar a ordem ou atualizar o código de carregamento.
+* **Aba Obrigatória:** Todos os arquivos devem conter uma aba denominada `Export`.
+* **Identificadores Chave:**
+  * `ANO MÊS`: Período no formato `YYYYMM` (ou representação de data mensal).
+  * `EQUIPAMENTO`: Tag/código do ativo (ex.: `CA-01`, `PF-03`, `ES-05`).
+* **Estrutura de 26 Colunas:**
+  ```text
+  ANO MÊS, EQUIPAMENTO,
+  DF (META), DF (REAL),
+  MTBF (META), MTBF (REAL),
+  MTBS (META), MTBS (REAL),
+  MTTR (META), MTTR,
+  NIC (META), NIC (VMINA),
+  UF (META), UF (REAL),
+  RO (META), RO (REAL),
+  HO (REAL),
+  HT (META), HT (REAL),
+  HM (META), HM (REAL),
+  HMC (META), HMC (REAL),
+  MPS (REAL), MPNS (REAL), HAC (REAL)
+  ```
 
-O arquivo de caminhão atualmente é válido e compatível estruturalmente com os
-outros três XLSX. Ele não possui uma coluna `GRUPO`; essa coluna é criada depois
-no notebook usando a relação entre equipamento e hierarquia operacional.
+---
+
+## 4. Regras de Limpeza e Integridade Automatizadas
+
+Durante a carga pelo módulo [`dados.py`](file:///home/marcus/projects/vale/trigger/modelo_confiabilidade/dados.py):
+1. **Remoção de Linhas de Rodapé:** Linhas contendo agregadores físicos como `Total`, linhas em branco ou textos de filtros aplicados são descartadas automaticamente.
+2. **Coerção Numérica Auditada:** Colunas numéricas com pontuação brasileira (vírgula decimal) são convertidas para ponto flutuante; qualquer valor incompatível é transformado em `NaN` e auditado no log.
+3. **Padronização Temporal:** `ANO MÊS` é parseado e validado como períodos mensais (`pd.Period(freq="M")`).

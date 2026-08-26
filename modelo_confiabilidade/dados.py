@@ -534,7 +534,9 @@ def build_operational_features(
                 len(frame) >= 10
                 and frame[column].nunique(dropna=True) / max(len(frame), 1) > 0.95
             )
-            text_high_cardinality = frame[column].dtype == object and numeric_high_cardinality
+            text_high_cardinality = (
+                pd.api.types.is_string_dtype(frame[column]) or frame[column].dtype == object
+            ) and numeric_high_cardinality
             if future or posterior:
                 source_excluded.add(column)
                 excluded.append({"fonte": source, "campo_original": column, "motivo": "disponibilidade posterior"})

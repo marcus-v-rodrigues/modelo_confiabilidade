@@ -1,115 +1,30 @@
-# Conflitos entre Notebook e Arquivos Atuais
+# Histórico de Ajustes Técnicos e Semânticos
 
-Este documento separa conflitos técnicos, que podem ser resolvidos por leitura
-ou renomeação, de conflitos semânticos, que exigem validação das regras de
-negócio.
+> **Nota:** Este documento registra o mapeamento técnico de migração entre as saídas preliminares do notebook e a estrutura de dados bruta do SAP adotada no pacote [`modelo_confiabilidade`](README.md).
 
-## Nomes de Arquivos
+---
 
-O notebook referencia quatro XLSX genéricos e quatro CSVs com nomes que não
-existem no diretório atual. Os arquivos atuais são separados por universo e por
-fonte operacional. O arquivo de caminhão agora está válido, mas ainda tem nome
-e posição diferentes dos esperados pelo notebook.
+## 1. Mapeamento de Nomes de Arquivos
 
-| Esperado pelo notebook | Atual |
-|---|---|
-| `INDICADORES MENSAIS POR UNIVERSO.xlsx` e variantes numeradas | quatro XLSX nomeados por universo |
-| `AMS_ativos_mina.csv` | `AMS_Contador.csv` ou `AMS_Calendario.csv` |
-| `AMC_ativos_mina.csv` | `AMC_ITABIRA.csv` |
-| `APR_ativos_mina.csv` | `APR_ITABIRA.csv` |
-| `Backlog_imos_ativos_mina.csv` | `Backlog_mina_itabira.csv` |
+| Nome Histórico (Notebook) | Arquivo Oficial em Produção | Universo / Função |
+| :--- | :--- | :--- |
+| `INDICADORES MENSAIS POR UNIVERSO.xlsx` | `INDICADORES MENSAIS POR UNIVERSO caminhao.xlsx` | Confiabilidade Caminhão |
+| `INDICADORES MENSAIS POR UNIVERSO (2).xlsx` | `INDICADORES MENSAIS POR UNIVERSO carga.xlsx` | Confiabilidade Carga |
+| `INDICADORES MENSAIS POR UNIVERSO (3).xlsx` | `INDICADORES MENSAIS POR UNIVERSO infra.xlsx` | Confiabilidade Infraestrutura |
+| `INDICADORES MENSAIS POR UNIVERSO (4).xlsx` | `INDICADORES MENSAIS POR UNIVERSO perfuracao.xlsx` | Confiabilidade Perfuração |
+| `AMS_ativos_mina.csv` | `AMS_Contador.csv` / `AMS_Calendario.csv` | Contadores e Calendário AMS |
+| `AMC_ativos_mina.csv` | `AMC_ITABIRA.csv` | Notificações e Aderência AMC |
+| `APR_ativos_mina.csv` | `APR_ITABIRA.csv` | Programação de Manutenção APR |
+| `Backlog_imos_ativos_mina.csv` | `Backlog_mina_itabira.csv` | Carteira e Horas de Backlog |
 
-## Leitura dos CSVs
+---
 
-Os arquivos atuais usam `;`, enquanto o notebook chama `pd.read_csv()` sem
-informar `sep=";"`. Sem essa alteração, as colunas podem ser lidas como um
-único campo. A presença de BOM também deve ser considerada na leitura do
-primeiro nome de coluna.
+## 2. Resolução da Hierarquia via `TPLNR`
 
-## Chaves e Hierarquia
+No pipeline atual, o agrupamento de equipamentos é resolvido diretamente pela hierarquia do SAP:
+* **`GRUPO = TPLNR.str.split("-")[-2]`**
+* **`EQUIPAMENTO = TPLNR.str.split("-")[-1]`**
 
-O notebook exige `TPLNR05` e `CALMONTH-Calendar_year_month`. Os arquivos atuais
-fornecem principalmente `TPLNR`, `YEAR` e `CALMONTH`.
+Essa regra elimina a necessidade de tabelas externas de de-para no fluxo padrão, mantendo consistência estrutural com a árvore de ativos da mina.
 
-O pipeline executável adota a hierarquia validada de `TPLNR`: o penúltimo
-segmento é `GRUPO` e o último é `EQUIPAMENTO`.
-
-```python
-partes = TPLNR.str.split("-")
-GRUPO = partes.str[-2]
-EQUIPAMENTO = partes.str[-1]
-```
-
-Antes de modelar, o pipeline verifica que todos os `TPLNR` operacionais estão
-preenchidos e têm pelo menos dois segmentos finais não vazios; verifica também
-que um mesmo `EQUIPAMENTO` não aparece associado a mais de um `GRUPO` e que os
-equipamentos dos indicadores têm cobertura na hierarquia. Falhas entram na
-auditoria com fonte `hierarquia_tplnr`, campo `TPLNR`, severidade `ERROR` e uma
-correção acionável. Um arquivo informado por `--group-map-file` continua sendo
-um override explícito para substituir essa rota.
-
-## Semântica dos campos operacionais
-
-Os nomes brutos das colunas, incluindo `IMAINDI*`, são preservados no pipeline
-e no relatório. Enquanto não houver uma regra de negócio validada, essas
-features recebem `status_semantico=nao_confirmado`: podem ter importância
-preditiva, mas não têm significado operacional confirmado. Portanto, o
-pipeline não inventa aliases AMS, AMC, APR ou backlog por semelhança de nome,
-nem interpreta contribuição à previsão como causalidade.
-
-## Colunas AMS
-
-O notebook espera `AMS_00H` e colunas agregadas com nomes `Soma de ...`. O
-`AMS_Contador.csv` fornece `IMAINDI383` e `IMAINDI384`, mas não os aliases nem
-`AMS_00H`. É necessário definir se `AMS_00H` é um campo bruto, um cálculo ou
-uma agregação de outro campo.
-
-## Colunas AMC
-
-O notebook espera `AMC_00I` e uma coluna agregada de notificações planejadas. O
-`AMC_ITABIRA.csv` possui `IMAINDI189_ACTUAL_NA` e outros indicadores relacionados,
-mas não possui `AMC_00I` com esse nome. A equivalência precisa ser validada.
-
-## Colunas APR
-
-O notebook espera `.APR` e `Soma de IMAINDI64_TOT`. O arquivo atual possui
-`IMAINDI64`, `IMAINDI63` e `IMAINDI65`, mas não possui os campos esperados. Não é
-seguro inferir a fórmula de `.APR` apenas pelo nome parecido.
-
-## Colunas de Backlog
-
-O notebook espera colunas semânticas como `HH_EM CARTEIRA`,
-`hh_em_ordens_vencidas`, YPM, YCM, corretiva e prioridades. O arquivo atual
-possui indicadores brutos `IMAINDI37`, `IMAINDI38`, `IMAINDI266`, `IMAINDI354`,
-`IMAINDI381`, `IMAINDI389`, `IMAINDI390` e `IMAINDI401`.
-
-Ainda não há equivalência confirmada entre esses indicadores e os conceitos
-usados pelo notebook. Esse é um conflito de regra de negócio, não apenas de
-nome de coluna.
-
-## Períodos
-
-| Fonte | Período |
-|---|---|
-| XLSX atuais | `202501`–`202608` |
-| CSVs operacionais | `202505`–`202608` |
-| Saídas gravadas no notebook | até `202606` |
-
-Os meses de janeiro a abril de 2025 possuem indicadores de confiabilidade, mas
-não possuem dados operacionais correspondentes nos CSVs atuais. Os resultados
-do notebook também não representam os dados mais recentes até agosto de 2026.
-Na execução preditiva, a cobertura operacional comum é a janela elegível; os
-meses sem cobertura suficiente são removidos antes da divisão temporal.
-
-## Nível de Detalhe
-
-Os XLSX têm indicadores mensais por equipamento. Os CSVs têm registros
-detalhados de ordens, notificações, operações e planos. O notebook espera fontes
-com colunas já tratadas e agregáveis por mês e grupo. Portanto, é necessária uma
-camada de transformação antes do merge.
-
-## Consequência
-
-O conjunto atual contém todos os arquivos principais, mas não é executável com o
-notebook apenas por troca de nomes. É necessário atualizar a leitura, criar as
-chaves, definir as regras de grupo e validar os mapeamentos semânticos.
+Para mais detalhes da arquitetura atual, consulte o [**`Pipeline de Modelagem`**](pipeline_modelagem.md).
