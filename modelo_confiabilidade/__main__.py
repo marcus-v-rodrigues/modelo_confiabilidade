@@ -2,14 +2,229 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
-from ._pipeline import main as _run_pipeline
+import pandas as pd
+
+from .auditoria import AUDIT_COLUMNS, _write_quality_reports, audit_data_quality
+from .configuracao import Config, DataValidationError, configure_logging, parse_args
+from .dados import (
+    _column_key,
+    _indicator_analysis_frame,
+    build_group_mapping,
+    build_hierarchy_group_mapping,
+    build_operational_features,
+    create_lag_features,
+    load_indicator_files,
+    load_operational_files,
+    normalize_indicator_frame,
+)
+from .diagnosticos import (
+    classify_validity,
+    extract_model_explanations,
+    run_statistical_diagnostics,
+)
+from .modelagem import _temporal_validation_audit, run_temporal_validation
+from .relatorios import generate_plots, save_results, write_final_report
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the validated pipeline through the package namespace."""
-    return _run_pipeline(argv)
+    """Run audit, group mapping, temporal modeling, persistence and reporting."""
+    config = parse_args(argv)
+    logger = configure_logging(config.output_dir)
+    results: dict[str, Any] = {"status": "failed", "audit": pd.DataFrame(columns=AUDIT_COLUMNS)}
+    try:
+        indicators = load_indicator_files(config.input_dir)
+        operational = load_operational_files(config.input_dir)
+        normalized_indicators = {
+            source: normalize_indicator_frame(frame, source)
+            for source, frame in indicators.items()
+        }
+        sources = {**normalized_indicators, **operational}
+        audit = audit_data_quality(sources)
+        audit_path = config.output_dir / "auditoria_qualidade.csv"
+        _write_quality_reports(audit, config.output_dir)
+        results["audit"] = audit
+        errors = int((audit["severidade"] == "ERROR").sum())
+        logger.info(
+            "Fontes carregadas: %d indicadores e %d operacionais; auditoria: %d registros, %d erros",
+            len(indicators),
+            len(operational),
+            len(audit),
+            errors,
+        )
+        if errors:
+            logger.error("Auditoria estrutural encontrou %d erros; verifique %s", errors, audit_path)
+            results.update(status="audit_only", motivo=f"auditoria estrutural encontrou {errors} erro(s)")
+            save_results(results, config.output_dir)
+            write_final_report(results, config.output_dir)
+            return 1
+        try:
+            combined_indicators = pd.concat(normalized_indicators.values(), ignore_index=True)
+            if config.group_map_file is not None:
+                mapped_indicators, mapped_operational = build_group_mapping(
+                    combined_indicators, operational, config.group_map_file
+                )
+            else:
+                mapped_indicators, mapped_operational = build_hierarchy_group_mapping(
+                    combined_indicators, operational
+                )
+        except DataValidationError as exc:
+            hierarchy_mapping = config.group_map_file is None
+            correction = getattr(exc, "correction", "")
+            if hierarchy_mapping and not correction:
+                correction = "forneca TPLNR preenchido, com GRUPO e EQUIPAMENTO nos dois segmentos finais"
+            mapping_diagnostic = pd.DataFrame(
+                [{
+                    "fonte": "hierarquia_tplnr" if hierarchy_mapping else "mapeamento",
+                    "categoria": "semantica",
+                    "campo": "TPLNR" if hierarchy_mapping else "GRUPO",
+                    "valor": correction,
+                    "severidade": "ERROR",
+                    "mensagem": str(exc),
+                }],
+                columns=AUDIT_COLUMNS,
+            )
+            audit = pd.concat([audit, mapping_diagnostic], ignore_index=True)
+            _write_quality_reports(audit, config.output_dir)
+            results.update(audit=audit, status="audit_only", motivo=str(exc))
+            save_results(results, config.output_dir)
+            write_final_report(results, config.output_dir)
+            logger.error("Mapeamento de grupo interrompe o pipeline: %s", exc)
+            return 1
+        analysis_indicators = _indicator_analysis_frame(mapped_indicators)
+        features, feature_metadata, excluded = build_operational_features(
+            mapped_operational, {"reference_frame": analysis_indicators}
+        )
+        feature_columns = [column for column in features.columns if column not in {"GRUPO", "MES"}]
+        lagged, lag_metadata = create_lag_features(
+            features,
+            feature_columns,
+            config.max_lag,
+            response_columns=[
+                column
+                for column in analysis_indicators.columns
+                if column not in {"GRUPO", "MES", "EQUIPAMENTO"}
+            ],
+        )
+        analytic = analysis_indicators.merge(lagged, on=["GRUPO", "MES"], how="left", validate="one_to_one")
+        analytic.attrs["feature_metadata"] = lag_metadata
+        metric_frames: list[pd.DataFrame] = []
+        prediction_frames: list[pd.DataFrame] = []
+        diagnostic_frames: list[pd.DataFrame] = []
+        coefficient_frames: list[pd.DataFrame] = []
+        ranking_frames: list[pd.DataFrame] = []
+        coverage_frames: list[pd.DataFrame] = []
+        temporal_exclusion_frames: list[pd.DataFrame] = []
+        classification_rows: list[dict[str, object]] = []
+        response_columns = [
+            column
+            for column in analysis_indicators.columns
+            if _column_key(column) in {"DFREAL", "MTBFREAL", "MTBSREAL", "MTTR", "NICVMINA"}
+        ]
+        for response in response_columns:
+            try:
+                predictions, _, metadata = run_temporal_validation(
+                    analytic,
+                    response,
+                    config,
+                    predictor_columns=lag_metadata["feature"].tolist(),
+                )
+                coverage_frame, temporal_exclusions = _temporal_validation_audit(response, metadata)
+                coverage_frames.append(coverage_frame)
+                if not temporal_exclusions.empty:
+                    temporal_exclusion_frames.append(temporal_exclusions)
+                response_metrics = pd.DataFrame(metadata.get("metricas", []))
+                if not response_metrics.empty:
+                    metric_frames.append(response_metrics)
+                if not predictions.empty:
+                    prediction_frames.append(predictions)
+                diagnostic = run_statistical_diagnostics(analytic, predictions, response)
+                diagnostic["resposta"] = response
+                diagnostic_frames.append(diagnostic)
+                test_periods = set(metadata.get("test_target_periods", ()))
+                fallback_train_frame = (
+                    analytic[~analytic["MES"].isin(test_periods)].copy()
+                    if test_periods
+                    else analytic.iloc[0:0].copy()
+                )
+                fallback_validation_frame = analytic[analytic["MES"].isin(test_periods)].copy()
+                train_frame = metadata.get("forecast_train_frame", fallback_train_frame)
+                validation_frame = metadata.get("forecast_test_frame", fallback_validation_frame)
+                final_estimators = metadata.get("final_estimators", {})
+                coefficients, ranking = extract_model_explanations(
+                    train_frame,
+                    predictions,
+                    response,
+                    validation_frame=validation_frame,
+                    estimator=final_estimators.get("elastic_net")
+                    if isinstance(final_estimators, Mapping)
+                    else None,
+                    response_column=metadata.get("forecast_target_column"),
+                    random_state=config.random_state,
+                )
+                coefficient_frames.append(coefficients)
+                ranking_frames.append(ranking)
+                classification = classify_validity(response_metrics, diagnostic, lag_metadata, config)
+                classification_rows.append({"resposta": response, **classification})
+            except Exception as exc:
+                logger.exception("Falha na resposta %s", response)
+                classification_rows.append({
+                    "resposta": response,
+                    "classificacao": "INVALIDO",
+                    "motivo": f"erro por resposta: {exc}",
+                })
+        results.update({
+            "status": "completed",
+            "audit": audit,
+            "base_analitica": analytic,
+            "metricas": pd.concat(metric_frames, ignore_index=True) if metric_frames else pd.DataFrame(),
+            "previsoes": pd.concat(prediction_frames, ignore_index=True) if prediction_frames else pd.DataFrame(),
+            "coeficientes": pd.concat(coefficient_frames, ignore_index=True) if coefficient_frames else pd.DataFrame(),
+            "importancia": pd.concat(ranking_frames, ignore_index=True) if ranking_frames else pd.DataFrame(),
+            "ranking": pd.concat(ranking_frames, ignore_index=True) if ranking_frames else pd.DataFrame(),
+            "features_excluidas": pd.concat(
+                [excluded, *temporal_exclusion_frames], ignore_index=True, sort=False
+            )
+            if temporal_exclusion_frames
+            else excluded,
+            "cobertura_temporal": pd.concat(coverage_frames, ignore_index=True)
+            if coverage_frames
+            else pd.DataFrame(),
+            "mapeamento_features": lag_metadata,
+            "diagnosticos": pd.concat(diagnostic_frames, ignore_index=True)
+            if diagnostic_frames
+            else pd.DataFrame(),
+            "classificacao": pd.DataFrame(classification_rows),
+        })
+        save_results(results, config.output_dir)
+        generate_plots(results, config.output_dir)
+        write_final_report(results, config.output_dir)
+        return 0 if response_columns and classification_rows else 1
+    except DataValidationError as exc:
+        diagnostic = pd.DataFrame(
+            [{
+                "fonte": getattr(exc, "source", "desconhecida"),
+                "categoria": "semantica" if getattr(exc, "source", "") == "mapeamento" else "fonte",
+                "campo": str(getattr(exc, "path", "")),
+                "valor": getattr(exc, "correction", ""),
+                "severidade": "ERROR",
+                "mensagem": str(exc),
+            }],
+            columns=AUDIT_COLUMNS,
+        )
+        _write_quality_reports(diagnostic, config.output_dir)
+        results.update(status="audit_only", audit=diagnostic, motivo=str(exc))
+        save_results(results, config.output_dir)
+        write_final_report(results, config.output_dir)
+        logger.error("Validacao de dados interrompida: %s", exc)
+        return 1
+    except Exception as exc:
+        logger.exception("Pipeline interrompido por erro inesperado")
+        results.update(status="failed", motivo=f"erro inesperado: {exc}")
+        save_results(results, config.output_dir)
+        write_final_report(results, config.output_dir)
+        return 1
 
 
 if __name__ == "__main__":

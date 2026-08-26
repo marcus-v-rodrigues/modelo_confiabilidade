@@ -916,7 +916,7 @@ def test_temporal_validation_uses_explicit_operational_predictor_contract() -> N
 
 def test_temporal_exclusions_appear_with_origin_tag_in_features_excluidas(tmp_path: Path) -> None:
     """Predictor exclusions from temporal validation are persisted with a distinct origin tag."""
-    from modelo_confiabilidade._pipeline import _temporal_validation_audit
+    from modelo_confiabilidade.modelagem import _temporal_validation_audit
 
     frame = _forecast_frame_with_all_responses()
     frame["text_preditor"] = "non-numeric"
