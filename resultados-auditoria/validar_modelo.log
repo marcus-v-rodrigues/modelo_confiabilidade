@@ -1,4 +1,0 @@
-2026-08-25 15:06:37,638 INFO Fontes carregadas: 4 indicadores e 5 operacionais; auditoria: 1762 registros, 4 erros
-2026-08-25 15:06:37,638 ERROR Auditoria estrutural encontrou 4 erros; verifique resultados-auditoria/auditoria_qualidade.csv
-2026-08-25 15:09:41,416 INFO Fontes carregadas: 4 indicadores e 5 operacionais; auditoria: 1762 registros, 4 erros
-2026-08-25 15:09:41,416 ERROR Auditoria estrutural encontrou 4 erros; verifique resultados-auditoria/auditoria_qualidade.csv

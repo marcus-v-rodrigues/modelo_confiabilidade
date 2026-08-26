@@ -18,3 +18,9 @@ build/
 dist/
 *.egg-info/
 .worktrees/
+
+# Execution outputs and logs
+resultados/
+resultados-*/
+*.log
+
