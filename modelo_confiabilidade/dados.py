@@ -140,7 +140,14 @@ def normalize_indicator_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
     equipment_column = columns_by_key.get("EQUIPAMENTO")
     month_column = columns_by_key.get("ANOMES")
     if equipment_column:
-        equipment = result[equipment_column].astype("string").str.strip()
+        equipment = (
+            result[equipment_column]
+            .astype("string")
+            .str.strip()
+            .str.rstrip(".")
+            .str.replace(r"-CARGA$", "", regex=True)
+        )
+        result[equipment_column] = equipment
         result = result.loc[equipment.notna() & equipment.ne("")].copy()
     if month_column:
         result[month_column] = parse_month_series(result[month_column], month_column)
@@ -225,28 +232,42 @@ def derive_tplnr_hierarchy(
     frame: pd.DataFrame,
     tplnr_column: str = "TPLNR",
 ) -> pd.DataFrame:
-    """Derive the group and equipment from the final TPLNR segments."""
+    """Derive the group and equipment from TPLNR segments, tolerating unassigned records."""
     if tplnr_column not in frame.columns:
         raise DataValidationError(f"Coluna TPLNR ausente: {tplnr_column}")
 
     values = frame[tplnr_column].astype("string").str.strip()
-    invalid = values.isna() | values.eq("")
+    non_empty = values.notna() & values.ne("")
     parts = values.str.split("-")
     valid_parts = parts.map(
         lambda value: isinstance(value, list)
         and len(value) >= 2
-        and all(str(part).strip() for part in value[-2:])
+        and any(str(part).strip() for part in value)
     )
-    invalid |= ~valid_parts
-    if invalid.any():
-        sample = values[invalid].head(3).tolist()
+    valid_mask = non_empty & valid_parts
+    if not valid_mask.any():
+        sample = values.dropna().head(3).tolist() if len(values.dropna()) > 0 else ["<NA>"]
         raise DataValidationError(
-            f"TPLNR invalido na coluna {tplnr_column}: {int(invalid.sum())}; amostra: {sample}"
+            f"TPLNR invalido na coluna {tplnr_column}: nenhum registro valido; amostra: {sample}"
         )
 
+    def _extract_group(p: object) -> str | None:
+        if not isinstance(p, list) or len(p) < 2:
+            return None
+        if len(p) >= 5:
+            return str(p[3]).strip()
+        return str(p[-2]).strip()
+
+    def _extract_equipment(p: object) -> str | None:
+        if not isinstance(p, list) or len(p) < 2:
+            return None
+        if len(p) >= 5:
+            return str(p[4]).strip()
+        return str(p[-1]).strip()
+
     result = frame.copy()
-    result["GRUPO"] = parts.map(lambda value: str(value[-2]).strip())
-    result["EQUIPAMENTO"] = parts.map(lambda value: str(value[-1]).strip())
+    result["GRUPO"] = parts.map(_extract_group).astype("string")
+    result["EQUIPAMENTO"] = parts.map(_extract_equipment).astype("string")
     return result
 
 
@@ -264,7 +285,10 @@ def build_hierarchy_group_mapping(
 
     lookup_source = (
         pd.concat(
-            [frame[["EQUIPAMENTO", "GRUPO"]] for frame in derived_operational.values()],
+            [
+                frame[["EQUIPAMENTO", "GRUPO"]].dropna()
+                for frame in derived_operational.values()
+            ],
             ignore_index=True,
         )
         if derived_operational
@@ -272,23 +296,54 @@ def build_hierarchy_group_mapping(
     )
     lookup_source["EQUIPAMENTO"] = lookup_source["EQUIPAMENTO"].astype("string").str.strip()
     lookup_source["GRUPO"] = lookup_source["GRUPO"].astype("string").str.strip()
-    groups_per_equipment = lookup_source.groupby("EQUIPAMENTO")["GRUPO"].nunique()
-    ambiguous = groups_per_equipment[groups_per_equipment > 1]
-    if not ambiguous.empty:
-        error = DataValidationError(
-            "Equipamento associado a multiplos grupos: " + ", ".join(ambiguous.index.astype(str))
-        )
-        error.correction = "resolver equipamento em um unico grupo"
-        raise error
-    lookup = lookup_source.drop_duplicates("EQUIPAMENTO")
+    lookup_source = lookup_source[
+        lookup_source["EQUIPAMENTO"].notna()
+        & lookup_source["GRUPO"].notna()
+        & lookup_source["EQUIPAMENTO"].ne("")
+        & lookup_source["GRUPO"].ne("")
+    ]
 
     if "EQUIPAMENTO" not in indicators.columns:
         raise DataValidationError("Indicadores requerem a coluna EQUIPAMENTO para o mapeamento")
+
+    indicator_equipments = set(indicators["EQUIPAMENTO"].astype("string").str.strip().dropna().unique())
+    norm_ind_eqs = {eq.replace("-", "").replace(".", "").upper() for eq in indicator_equipments}
+
+    lookup_source["_EQ_NORM"] = (
+        lookup_source["EQUIPAMENTO"]
+        .astype("string")
+        .str.replace("-", "", regex=False)
+        .str.replace(".", "", regex=False)
+        .str.upper()
+    )
+    ind_lookup = lookup_source[lookup_source["_EQ_NORM"].isin(norm_ind_eqs)]
+
+    counts = ind_lookup.groupby(["EQUIPAMENTO", "GRUPO"]).size().reset_index(name="count")
+    counts = counts.sort_values(["EQUIPAMENTO", "count"], ascending=[True, False])
+
+    top1 = counts.groupby("EQUIPAMENTO").nth(0)
+    top2 = counts.groupby("EQUIPAMENTO").nth(1)
+    tot = counts.groupby("EQUIPAMENTO")["count"].sum().reset_index(name="total")
+    merged = top1.merge(top2, on="EQUIPAMENTO", suffixes=("_1", "_2"), how="inner").merge(tot, on="EQUIPAMENTO")
+    ambiguous = merged[merged["count_2"] / merged["total"] >= 0.15]
+
+    if not ambiguous.empty:
+        error = DataValidationError(
+            "Equipamento associado a multiplos grupos: " + ", ".join(ambiguous["EQUIPAMENTO"].astype(str))
+        )
+        error.correction = "resolver equipamento em um unico grupo"
+        raise error
+
+    all_counts = lookup_source.groupby(["EQUIPAMENTO", "GRUPO"]).size().reset_index(name="count")
+    all_counts = all_counts.sort_values(["EQUIPAMENTO", "count"], ascending=[True, False])
+    all_top1 = all_counts.groupby("EQUIPAMENTO").nth(0)
+    lookup = all_top1.drop_duplicates("EQUIPAMENTO").set_index("EQUIPAMENTO")["GRUPO"]
+
     mapped_indicators = indicators.copy()
     mapped_indicators["EQUIPAMENTO"] = mapped_indicators["EQUIPAMENTO"].astype("string").str.strip()
     if "GRUPO" in mapped_indicators.columns:
         mapped_indicators = mapped_indicators.drop(columns=["GRUPO"])
-    mapped_indicators = mapped_indicators.merge(lookup, on="EQUIPAMENTO", how="left", sort=False)
+    mapped_indicators["GRUPO"] = mapped_indicators["EQUIPAMENTO"].map(lookup)
     missing_group = (
         mapped_indicators["GRUPO"].isna()
         | mapped_indicators["GRUPO"].astype("string").str.strip().eq("")
@@ -369,7 +424,7 @@ def build_group_mapping(
                     f"Fonte {name} nao possui EQUIPAMENTO/TPLNR para aplicar o mapeamento"
                 )
             result["GRUPO"] = expected
-        if result["GRUPO"].isna().any():
+        if name == "indicadores" and result["GRUPO"].isna().any():
             sample = (
                 result.loc[result["GRUPO"].isna(), _mapping_key(result) or "GRUPO"]
                 .astype(str)
@@ -425,32 +480,32 @@ def aggregate_monthly_data(frame: pd.DataFrame, excluded_columns: Sequence[str] 
         numeric = pd.to_numeric(result[column], errors="coerce")
         if numeric.notna().any() and numeric.notna().mean() >= 0.95:
             values = numeric
-            aggregations[f"{column}_sum"] = values.groupby([result["GRUPO"], result["MES"]]).sum()
-            aggregations[f"{column}_mean"] = values.groupby([result["GRUPO"], result["MES"]]).mean()
-            aggregations[f"{column}_median"] = values.groupby([result["GRUPO"], result["MES"]]).median()
-            aggregations[f"{column}_min"] = values.groupby([result["GRUPO"], result["MES"]]).min()
-            aggregations[f"{column}_max"] = values.groupby([result["GRUPO"], result["MES"]]).max()
-            aggregations[f"{column}_count"] = values.groupby([result["GRUPO"], result["MES"]]).count()
-            aggregations[f"{column}_nunique"] = values.groupby([result["GRUPO"], result["MES"]]).nunique()
+            group_obj = values.groupby([result["GRUPO"], result["MES"]])
+            aggregations[f"{column}_sum"] = group_obj.sum()
+            aggregations[f"{column}_mean"] = group_obj.mean()
+            aggregations[f"{column}_median"] = group_obj.median()
+            aggregations[f"{column}_min"] = group_obj.min()
+            aggregations[f"{column}_max"] = group_obj.max()
+            aggregations[f"{column}_count"] = group_obj.count()
+            aggregations[f"{column}_nunique"] = group_obj.nunique()
         else:
-            if len(result) >= 10 and result[column].nunique(dropna=True) / max(len(result), 1) > 0.95:
+            n_unique = result[column].nunique(dropna=True)
+            if len(result) >= 10 and n_unique / max(len(result), 1) > 0.95:
                 continue
-            groups = result.groupby(["GRUPO", "MES"])[column]
+            groups = result.groupby([result["GRUPO"], result["MES"]])[column]
             aggregations[f"{column}_count"] = groups.count()
             aggregations[f"{column}_nunique"] = groups.nunique()
-            proportions = (
-                result.assign(_value=result[column].astype("string"))
-                .groupby(["GRUPO", "MES", "_value"])
-                .size()
-            )
-            for value in result[column].dropna().astype("string").unique():
-                aggregations[f"{column}_prop_{value}"] = proportions.groupby(level=[0, 1]).sum() * 0.0
-                for index in proportions.index:
-                    if index[2] == value:
-                        aggregations[f"{column}_prop_{value}"].loc[index[:2]] = proportions.loc[index]
-                aggregations[f"{column}_prop_{value}"] = aggregations[f"{column}_prop_{value}"].div(
-                    groups.size()
-                ).fillna(0)
+            if n_unique <= 20:
+                proportions = (
+                    result.assign(_value=result[column].astype("string"))
+                    .groupby([result["GRUPO"], result["MES"], "_value"])
+                    .size()
+                )
+                prop_df = proportions.unstack(level="_value", fill_value=0)
+                group_sizes = groups.size()
+                prop_df = prop_df.reindex(group_sizes.index, fill_value=0).div(group_sizes, axis=0).fillna(0)
+                for value in prop_df.columns:
+                    aggregations[f"{column}_prop_{value}"] = prop_df[value]
     output = (
         pd.DataFrame(aggregations).reset_index()
         if aggregations
@@ -762,13 +817,18 @@ def create_lag_features(
     for feature in feature_columns:
         feature_key = _column_key(feature)
         original_key = _column_key(metadata_by_feature.get(feature, {}).get("campo_original", ""))
-        if any(token in feature_key or token in original_key for token in response_keys):
+        if any(
+            token in feature_key or token in original_key
+            for token in response_keys
+            if len(token) >= 4 or token in {"MTTR", "NIC"}
+        ):
             raise DataValidationError(
                 f"Feature {feature} e resposta ou derivada de resposta; nao pode virar lag"
             )
     result = frame.sort_values(["GRUPO", "MES"]).reset_index(drop=True).copy()
     records: list[dict[str, object]] = []
     metadata_events: list[dict[str, str]] = []
+    lag_columns = {}
     for feature in feature_columns:
         if feature not in result.columns:
             raise DataValidationError(f"Feature ausente para lag: {feature}")
@@ -781,7 +841,8 @@ def create_lag_features(
         grouped = result.groupby("GRUPO", sort=False)[feature]
         for lag in range(max_lag + 1):
             name = f"{feature}_lag_{lag}"
-            result[name] = grouped.shift(lag) if lag else result[feature]
+            lag_series = grouped.shift(lag) if lag else result[feature]
+            lag_columns[name] = lag_series
             original = metadata_by_feature.get(feature, {})
             records.append({
                 "feature": name,
@@ -790,10 +851,12 @@ def create_lag_features(
                 "transformacao": "shift",
                 "mes_referencia": "t",
                 "defasagem": lag,
-                "observacoes_validas": int(result[name].notna().sum()),
+                "observacoes_validas": int(lag_series.notna().sum()),
                 "risco_vazamento": original.get("risco_vazamento", "nao_avaliado"),
                 "status_semantico": original.get("status_semantico", "nao_confirmado"),
             })
+    if lag_columns:
+        result = pd.concat([result, pd.DataFrame(lag_columns, index=result.index)], axis=1)
     if "resposta" in result.columns:
         result["resposta_t1"] = result.groupby("GRUPO", sort=False)["resposta"].shift(-1)
     metadata = pd.DataFrame(records, columns=FEATURE_METADATA_COLUMNS)

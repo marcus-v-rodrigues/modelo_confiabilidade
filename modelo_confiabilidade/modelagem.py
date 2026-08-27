@@ -84,6 +84,8 @@ def _select_predictor_columns(
             excluded.append({"feature": str(column), "motivo": "resposta de confiabilidade ou derivada"})
         elif not pd.api.types.is_numeric_dtype(frame[column]):
             excluded.append({"feature": str(column), "motivo": "preditor nao numerico"})
+        elif not frame[column].notna().any():
+            excluded.append({"feature": str(column), "motivo": "sem valores observados"})
         else:
             selected.append(str(column))
     return selected, excluded
@@ -169,7 +171,7 @@ def build_model_pipeline(model_name: str, random_state: int) -> Pipeline:
     if normalized in {"random_forest", "randomforest"}:
         return Pipeline([
             ("imputer", SimpleImputer(strategy="median")),
-            ("model", RandomForestRegressor(random_state=random_state, n_jobs=1)),
+            ("model", RandomForestRegressor(random_state=random_state, n_jobs=-1)),
         ])
     raise ValueError(f"Modelo nao suportado: {model_name}")
 

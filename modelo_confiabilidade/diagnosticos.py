@@ -509,16 +509,35 @@ def extract_model_explanations(
         and target_column in validation
         and set(features).issubset(validation.columns)
     ):
-        result = permutation_importance(
-            fitted,
-            validation[features],
-            validation[target_column],
-            n_repeats=5,
-            random_state=random_state,
-            scoring="neg_mean_absolute_error",
-        )
-        ranking_values = result.importances_mean
-        ranking_status = "oos_permutacao"
+        if hasattr(model, "coef_"):
+            base_score = -float(np.mean(np.abs(validation[target_column] - fitted.predict(validation[features]))))
+            ranking_values = np.zeros(len(features))
+            rng = np.random.RandomState(random_state)
+            val_X = validation[features].copy()
+            active_indices = [i for i, v in enumerate(values) if abs(v) > 1e-9]
+            for idx in active_indices:
+                feat_col = features[idx]
+                col_orig = val_X[feat_col].to_numpy()
+                scores = []
+                for _ in range(5):
+                    val_X[feat_col] = rng.permutation(col_orig)
+                    perm_pred = fitted.predict(val_X)
+                    scores.append(-float(np.mean(np.abs(validation[target_column] - perm_pred))))
+                val_X[feat_col] = col_orig
+                ranking_values[idx] = base_score - float(np.mean(scores))
+            ranking_status = "oos_permutacao"
+        else:
+            result = permutation_importance(
+                fitted,
+                validation[features],
+                validation[target_column],
+                n_repeats=5,
+                random_state=random_state,
+                scoring="neg_mean_absolute_error",
+                n_jobs=-1,
+            )
+            ranking_values = result.importances_mean
+            ranking_status = "oos_permutacao"
     ranking = pd.DataFrame(
         [
             {

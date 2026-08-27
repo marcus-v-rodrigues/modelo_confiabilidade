@@ -58,7 +58,7 @@ O modelo apura e projeta métricas fundamentais por grupo e equipamento com suas
 
    ```bash
    python -m venv .venv
-   .venv\Scripts\Activate.ps1
+   source .venv/bin/activate
    ```
 3. **Instale as dependências:**
 

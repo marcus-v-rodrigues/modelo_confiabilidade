@@ -113,7 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if column not in {"GRUPO", "MES", "EQUIPAMENTO"}
             ],
         )
-        analytic = analysis_indicators.merge(lagged, on=["GRUPO", "MES"], how="left", validate="one_to_one")
+        analytic = analysis_indicators.merge(lagged, on=["GRUPO", "MES"], how="left", validate="many_to_one")
         analytic.attrs["feature_metadata"] = lag_metadata
         metric_frames: list[pd.DataFrame] = []
         prediction_frames: list[pd.DataFrame] = []
