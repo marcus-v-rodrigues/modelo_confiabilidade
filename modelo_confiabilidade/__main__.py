@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Mapping, Sequence
 
 import pandas as pd
@@ -115,6 +116,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         analytic = analysis_indicators.merge(lagged, on=["GRUPO", "MES"], how="left", validate="many_to_one")
         analytic.attrs["feature_metadata"] = lag_metadata
+        # Alinhamento de janela: linhas cujo MES esteja a menos de max_lag meses do inicio
+        # do dado operacional nao possuem historico completo e ficariam com milhares de
+        # colunas de lag 100% NaN. Elas sao removidas antes da modelagem e dos diagnosticos.
+        if not features.empty:
+            aligned_start = features["MES"].min() + config.max_lag
+            rows_before = len(analytic)
+            analytic = analytic.loc[analytic["MES"] >= aligned_start].copy()
+            logger.info(
+                "Alinhamento de janela: MES >= %s (inicio operacional + max_lag); "
+                "%d linhas sem historico completo de lags removidas",
+                str(aligned_start),
+                rows_before - len(analytic),
+            )
+        # Features sem nenhuma observacao valida nunca se tornam preditores: nao carregam
+        # sinal e tornariam imputacao e correlacoes indefinidas.
+        lag_feature_columns = lag_metadata["feature"].tolist()
+        if "observacoes_validas" in lag_metadata.columns:
+            usable = lag_metadata["observacoes_validas"].fillna(0) > 0
+            lag_feature_columns = lag_metadata.loc[usable, "feature"].tolist()
+            logger.info(
+                "Selecao de preditores: %d de %d features de lag possuem ao menos uma observacao valida",
+                len(lag_feature_columns),
+                len(lag_metadata),
+            )
         metric_frames: list[pd.DataFrame] = []
         prediction_frames: list[pd.DataFrame] = []
         diagnostic_frames: list[pd.DataFrame] = []
@@ -128,13 +153,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             for column in analysis_indicators.columns
             if _column_key(column) in {"DFREAL", "MTBFREAL", "MTBSREAL", "MTTR", "NICVMINA"}
         ]
-        for response in response_columns:
+        logger.info(
+            "Iniciando modelagem de %d respostas: %s",
+            len(response_columns),
+            ", ".join(response_columns),
+        )
+        for response_index, response in enumerate(response_columns, start=1):
+            response_started = time.monotonic()
+            logger.info(
+                "Resposta %s (%d/%d): iniciando validacao temporal",
+                response,
+                response_index,
+                len(response_columns),
+            )
             try:
                 predictions, _, metadata = run_temporal_validation(
                     analytic,
                     response,
                     config,
-                    predictor_columns=lag_metadata["feature"].tolist(),
+                    predictor_columns=lag_feature_columns,
                 )
                 coverage_frame, temporal_exclusions = _temporal_validation_audit(response, metadata)
                 coverage_frames.append(coverage_frame)
@@ -173,6 +210,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ranking_frames.append(ranking)
                 classification = classify_validity(response_metrics, diagnostic, lag_metadata, config)
                 classification_rows.append({"resposta": response, **classification})
+                logger.info(
+                    "Resposta %s: concluida em %.1f min",
+                    response,
+                    (time.monotonic() - response_started) / 60,
+                )
             except Exception as exc:
                 logger.exception("Falha na resposta %s", response)
                 classification_rows.append({
@@ -183,7 +225,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         real_vs_meta_frame = compute_real_vs_meta(analysis_indicators)
         correlations_frame = compute_indicator_correlations(
             analytic,
-            feature_columns=lag_metadata["feature"].tolist() if "feature" in lag_metadata.columns else None,
+            feature_columns=lag_feature_columns,
             response_columns=response_columns,
         )
         results.update({
@@ -212,8 +254,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "classificacao": pd.DataFrame(classification_rows),
         })
         save_results(results, config.output_dir)
+        logger.info("Resultados salvos em %s; gerando graficos", config.output_dir)
         generate_plots(results, config.output_dir)
         write_final_report(results, config.output_dir)
+        status = "concluido" if response_columns and classification_rows else "falhou"
+        logger.info(
+            "Pipeline %s: todos os artefatos gravados em %s (relatorio_final.txt pronto)",
+            status,
+            config.output_dir,
+        )
         return 0 if response_columns and classification_rows else 1
     except DataValidationError as exc:
         diagnostic = pd.DataFrame(

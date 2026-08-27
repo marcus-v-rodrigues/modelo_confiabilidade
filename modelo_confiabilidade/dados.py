@@ -460,6 +460,24 @@ def _parse_month_column(frame: pd.DataFrame, month: str) -> pd.Series:
     return parse_month_series(combined, "MES")
 
 
+def _looks_like_dates(series: pd.Series) -> bool:
+    """Detect text columns whose values are calendar dates.
+
+    Proportions of a specific date are meaningless temporal artifacts, so such
+    columns only receive count/nunique aggregations.
+    """
+    values = series.dropna().astype("string").str.strip()
+    values = values[values.ne("")]
+    if values.empty:
+        return False
+    sample = values.astype(str)
+    iso = pd.to_datetime(sample, format="%Y-%m-%d", errors="coerce")
+    if iso.notna().mean() >= 0.95:
+        return True
+    compact = pd.to_datetime(sample, format="%Y%m%d", errors="coerce")
+    return compact.notna().mean() >= 0.95
+
+
 def aggregate_monthly_data(frame: pd.DataFrame, excluded_columns: Sequence[str] = ()) -> pd.DataFrame:
     """Aggregate eligible columns at ``GRUPO``/month and attach coverage stats."""
     if "GRUPO" not in frame.columns or _month_column(frame) is None:
@@ -495,7 +513,7 @@ def aggregate_monthly_data(frame: pd.DataFrame, excluded_columns: Sequence[str] 
             groups = result.groupby([result["GRUPO"], result["MES"]])[column]
             aggregations[f"{column}_count"] = groups.count()
             aggregations[f"{column}_nunique"] = groups.nunique()
-            if n_unique <= 20:
+            if n_unique <= 20 and not _looks_like_dates(result[column]):
                 proportions = (
                     result.assign(_value=result[column].astype("string"))
                     .groupby([result["GRUPO"], result["MES"], "_value"])

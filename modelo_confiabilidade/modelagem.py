@@ -142,8 +142,16 @@ def calculate_regression_metrics(
         if np.isfinite(r2) and n > p + 1
         else float("nan")
     )
-    pearson = float(pd.Series(actual_values).corr(pd.Series(predicted_values)))
-    spearman = float(pd.Series(actual_values).corr(pd.Series(predicted_values), method="spearman"))
+    # Correlacoes com variancia zero nao sao definidas; o calculo e evitado para nao
+    # disparar ConstantInputWarning/invalid value in divide.
+    if _variation_defined(actual_values, predicted_values):
+        pearson = float(pd.Series(actual_values).corr(pd.Series(predicted_values)))
+        spearman = float(
+            pd.Series(actual_values).corr(pd.Series(predicted_values), method="spearman")
+        )
+    else:
+        pearson = float("nan")
+        spearman = float("nan")
     return {
         "mae": float(np.abs(error).mean()),
         "rmse": float(np.sqrt(np.mean(error**2))),
@@ -162,26 +170,39 @@ def calculate_regression_metrics(
 def build_model_pipeline(model_name: str, random_state: int) -> Pipeline:
     """Build a leakage-safe preprocessing and estimator pipeline."""
     normalized = model_name.lower().replace("-", "_").replace(" ", "_")
+    # keep_empty_features=True: colunas sem nenhum valor observado em uma janela de treino
+    # sao retidas (preenchidas com zero) em vez de descartadas silenciosamente pelo imputer.
     if normalized in {"elastic_net", "elasticnet"}:
         return Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
+            ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
             ("scaler", StandardScaler()),
             ("model", ElasticNet(random_state=random_state, max_iter=10000)),
         ])
     if normalized in {"random_forest", "randomforest"}:
         return Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
+            ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
             ("model", RandomForestRegressor(random_state=random_state, n_jobs=-1)),
         ])
     raise ValueError(f"Modelo nao suportado: {model_name}")
 
 
 class _PeriodTimeSeriesSplit:
-    """Split complete periods, never individual rows, into chronological folds."""
+    """Split complete periods, never individual rows, into chronological folds.
 
-    def __init__(self, n_splits: int, periods: Sequence[object]):
+    Folds whose training window has fewer than ``min_train_periods`` periods are
+    skipped: fitting on one month would leave high-lag columns entirely NaN and
+    produce degenerate fold metrics.
+    """
+
+    def __init__(
+        self,
+        n_splits: int,
+        periods: Sequence[object],
+        min_train_periods: int = 3,
+    ):
         self.n_splits = n_splits
         self.periods = np.asarray(periods)
+        self.min_train_periods = max(1, int(min_train_periods))
 
     def get_n_splits(self, X: object = None, y: object = None, groups: object = None) -> int:
         return self.n_splits
@@ -194,6 +215,7 @@ class _PeriodTimeSeriesSplit:
             raise ValueError("Periodos insuficientes para validacao temporal")
         validation_positions = np.array_split(np.arange(1, len(unique)), self.n_splits)
         for positions in validation_positions:
+            positions = positions[positions >= self.min_train_periods]
             if len(positions) == 0:
                 continue
             train_periods = set(unique[: positions[0]])
@@ -248,10 +270,15 @@ def _fit_search(
     else:
         grid = {"model__n_estimators": [50], "model__max_depth": [None, 5]}
     splitter = _PeriodTimeSeriesSplit(n_splits, periods.tolist())
+    folds = list(splitter.split(X))
+    if len(folds) < 2:
+        # Janela insuficiente para folds validos; treino direto evita folds degenerados.
+        pipeline.fit(X, y)
+        return pipeline, {}
     search = GridSearchCV(
         pipeline,
         grid,
-        cv=splitter,
+        cv=folds,
         scoring="neg_mean_absolute_error",
         refit=True,
         n_jobs=1,
@@ -621,6 +648,16 @@ def _as_frame(value: object, columns: Sequence[str] = ()) -> pd.DataFrame:
     if isinstance(value, list):
         return pd.DataFrame(list(value), columns=list(columns) if columns else None)
     return pd.DataFrame(columns=list(columns))
+
+
+def _variation_defined(actual: np.ndarray, predicted: np.ndarray) -> bool:
+    """True when Pearson/Spearman are defined (two points and non-zero variation)."""
+    return bool(
+        len(actual) > 1
+        and len(predicted) > 1
+        and np.std(actual) > 0
+        and np.std(predicted) > 0
+    )
 
 
 def _periods_as_text(periods: object) -> str:

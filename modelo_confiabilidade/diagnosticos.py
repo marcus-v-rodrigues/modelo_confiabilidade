@@ -238,7 +238,16 @@ def run_statistical_diagnostics(
     def correlation_check() -> None:
         if len(features) < 2:
             raise ValueError("menos de duas features numericas")
-        matrix = numeric[features].corr().abs()
+        # Colunas constantes ou vazias nao possuem correlacao definida; sao excluidas
+        # para evitar divisao por zero (stddev=0) e ConstantInputWarning no spearman.
+        varying = [
+            feature
+            for feature in features
+            if feature in numeric.columns and numeric[feature].nunique(dropna=True) > 1
+        ]
+        if len(varying) < 2:
+            raise ValueError("menos de duas features com variancia")
+        matrix = numeric[varying].corr().abs()
         upper = matrix.where(np.triu(np.ones(matrix.shape), k=1).astype(bool))
         maximum = float(upper.max().max()) if upper.notna().any().any() else np.nan
         record(
@@ -375,13 +384,13 @@ def run_statistical_diagnostics(
                 group_frame["valor_previsto"], errors="coerce"
             ) - pd.to_numeric(group_frame["valor_real"], errors="coerce")
             residual = residual.dropna()
-            if len(residual) < 2:
+            if len(residual) < 2 or np.std(residual.to_numpy()) == 0:
                 record(
                     "durbin_watson",
                     "insuficiente",
                     np.nan,
                     "WARNING",
-                    f"residuos OOS insuficientes no grupo {group}",
+                    f"residuos OOS insuficientes ou constantes no grupo {group}",
                     group,
                 )
                 record(
@@ -389,7 +398,7 @@ def run_statistical_diagnostics(
                     "insuficiente",
                     np.nan,
                     "WARNING",
-                    f"residuos OOS insuficientes no grupo {group}",
+                    f"residuos OOS insuficientes ou constantes no grupo {group}",
                     group,
                 )
                 continue
