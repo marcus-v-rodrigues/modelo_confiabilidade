@@ -160,7 +160,80 @@ O pipeline possui travas de segurança rigorosas (*Quality Gates*) para garantir
 
 ---
 
-## 8. Catálogo de Saídas Geradas (`resultados/`)
+## 8. Como o Pipeline Funciona por Dentro (Explicação Didática)
+
+### A ideia em uma frase
+
+> *Usar o histórico operacional de manutenção (AMS/AMC/APR/Backlog) de até `max-lag` meses atrás para prever os indicadores de confiabilidade do próximo mês ($t \to t+1$).*
+
+O pipeline é uma linha de produção com 7 etapas:
+
+### 1. Ingestão e auditoria (`dados.py`, `auditoria.py`)
+
+Lê os 9 arquivos de `bases/`, padroniza colunas, converte datas e roda uma **auditoria de qualidade de dados**: nulos, valores fora de escala, `inf`, duplicidades — cada problema classificado como `INFO`/`WARNING`/`ERROR`. Se houver `ERROR` estrutural, o pipeline para **antes** de modelar (só gera o relatório de auditoria).
+
+**Técnica:** *data validation / quality gates*.
+
+### 2. Mapeamento de grupos (`dados.py`)
+
+Cada linha precisa de um `GRUPO` de manutenção. Sem tabela de mapeamento, o código **deduz pela hierarquia do `TPLNR`** (código de localização técnica: `... → GRUPO → EQUIPAMENTO`) e reclama se a dedução for ambígua (equipamento aparecendo em dois grupos).
+
+**Técnica:** resolução de hierarquia + detecção de ambiguidade de mapeamento.
+
+### 3. Engenharia de features (`dados.py`)
+
+Aqui os registros brutos são "traduzidos" para o nível mensal:
+
+* **Agregação por `GRUPO × MÊS`**: médias, somas, contagens, proporções (ex.: `% de ordens com status "APRV"`);
+* **Lags (defasagens)**: para cada feature, cria `lag_1` a `lag_max` — o valor de 1 mês atrás, 2 meses atrás, etc. É assim que o modelo "olha para o passado";
+* **Alinhamento de janela**: descarta os primeiros meses sem histórico completo de lags (nada de enganar o modelo com colunas 100% vazias).
+
+**Técnica:** *feature engineering* temporal (agregação + *lag features*).
+
+### 4. Modelagem (`modelagem.py`) — a parte pesada ⏱️
+
+Para cada indicador-alvo (DF, MTBF, MTBS, MTTR, NIC), treina **3 concorrentes**:
+
+| Modelo | O que é | Pipeline sklearn |
+| :--- | :--- | :--- |
+| `baseline_t1` | "prever que o mês que vem = mês atual" | O mínimo que qualquer modelo precisa vencer |
+| `elastic_net` | Regressão linear com regularização L1+L2 | `SimpleImputer(median) → StandardScaler → ElasticNet` |
+| `random_forest` | Floresta de árvores (captura não-linearidades) | `SimpleImputer(median) → RandomForestRegressor` |
+
+Detalhes importantes:
+
+* **Alvo deslocado**: o target é `shift(-1)` — as features de um mês preveem o indicador do **mês seguinte** (evita vazamento de futuro);
+* **Validação temporal (walk-forward)**: um `TimeSeriesSplit` customizado (`_PeriodTimeSeriesSplit`) garante que o treino é sempre **antes** do teste, em janelas cronológicas — nada de K-fold comum bagunçando o tempo;
+* **`GridSearchCV`**: busca de hiperparâmetros (α e `l1_ratio` do ElasticNet; profundidade da floresta) usando MAE como critério;
+* **Pipeline sklearn**: imputação e escala ficam *dentro* do pipeline e são reajustados a cada fold — evita vazamento de dados entre treino e teste;
+* **OOF (out-of-fold)**: cada fold gera previsões em dados nunca vistos; depois há um **teste final** no período mais recente.
+
+### 5. Diagnóstico e explicação (`diagnosticos.py`)
+
+* **Explicabilidade**: coeficientes do ElasticNet (quais lags puxam a previsão para cima/baixo) e `feature_importances_` da floresta;
+* **Diagnósticos estatísticos** por resposta (resíduos, correlações Pearson/Spearman, VIF);
+* **`classify_validity`**: um "juiz" que dá parecer a cada modelo com regras explícitas — supera o baseline? MAPE dentro do limite? amostra suficiente? — resultando em `VALIDO`, `EXPLORATORIO` ou `INVALIDO`.
+
+**Técnica:** *model explainability* + benchmark contra baseline + critérios de aceitação pré-definidos.
+
+### 6. Relatórios e gráficos (`relatorios.py`)
+
+Grava tudo em `resultados/`: real × meta, correlações, dispersão previsto × real, resíduos temporais, séries reais vs. previstas, comparação de modelos e o `relatorio_final.txt`.
+
+### O fluxo completo
+
+```text
+bases/*.csv → auditoria → mapeamento GRUPO → agregação mensal + lags
+     → walk-forward CV (ElasticNet vs Random Forest vs baseline t+1)
+     → métricas (MAE/RMSE/MAPE/R²) + explicações + juiz de validade
+     → gráficos + relatório final
+```
+
+**Em resumo:** todas as técnicas são de *machine learning tabular temporal* clássico — lag features, validação cronológica walk-forward, regularização elástica, ensembles de árvores, tuning com `GridSearchCV` — além de uma camada de governança (auditoria + validade) que dá honestidade estatística aos resultados: se a amostra é insuficiente, o parecer diz isso em vez de vender previsão.
+
+---
+
+## 9. Catálogo de Saídas Geradas (`resultados/`)
 
 Quando a execução finaliza, o diretório de saída contém:
 
@@ -178,7 +251,7 @@ Quando a execução finaliza, o diretório de saída contém:
 
 ---
 
-## 9. Como Executar a Suíte de Testes
+## 10. Como Executar a Suíte de Testes
 
 O projeto possui 105 testes automatizados cobrindo leitura, auditoria, derivação de `TPLNR`, integridade temporal, expurgo de desvios, análise Real x Meta e modelagem:
 
@@ -192,7 +265,7 @@ pytest -q
 
 ---
 
-## 10. Arquitetura do Código
+## 11. Arquitetura do Código
 
 ```text
 modelo_confiabilidade/
@@ -208,7 +281,7 @@ modelo_confiabilidade/
 
 ---
 
-## 11. Documentação Técnica Completa
+## 12. Documentação Técnica Completa
 
 Para aprofundar nos fundamentos matemáticos, regras de negócio e detalhes de implementação, consulte a pasta [`docs/`](docs/):
 
