@@ -1492,3 +1492,126 @@ def test_audit_only_run_writes_quality_report_and_returns_error(small_source_dir
     report = (output_dir / "relatorio_final.txt").read_text(encoding="utf-8").lower()
     assert "tplnr" in report
     assert "derivado" in report
+
+
+def test_normalize_indicator_frame_expurgates_inf_negatives_and_out_of_scale_percentages() -> None:
+    """UF (META) and percentage indicators expurgate inf, negative and >100 process deviations."""
+    frame = pd.DataFrame({
+        "ANO MÊS": ["202501", "202502", "202503", "202504", "202505", "202506"],
+        "EQUIPAMENTO": ["EQ-1", "EQ-1", "EQ-1", "EQ-1", "EQ-1", "EQ-1"],
+        "UF (META)": ["inf", "-3.58e15", "6.58e14", "", "85.5", "-10"],
+        "DF (REAL)": ["92,3", "150.0", "-5", "88.0", "90.0", "95.0"],
+        "MTBF (REAL)": ["120.5", "-10.0", "80.0", "95.0", "110.0", "130.0"],
+    })
+    result = normalize_indicator_frame(frame, "infra")
+
+    # UF (META): only index 4 (85.5) should be valid; index 0 (inf), 1 (-3.58e15), 2 (6.58e14), 3 (empty), 5 (-10) are NaN/NA
+    assert pd.isna(result.loc[0, "UF (META)"])
+    assert pd.isna(result.loc[1, "UF (META)"])
+    assert pd.isna(result.loc[2, "UF (META)"])
+    assert pd.isna(result.loc[3, "UF (META)"])
+    assert float(result.loc[4, "UF (META)"]) == 85.5
+    assert pd.isna(result.loc[5, "UF (META)"])
+
+    # DF (REAL): index 0 (92.3), 3 (88.0), 4 (90.0), 5 (95.0) are valid; index 1 (150.0 > 100) and 2 (-5 < 0) are NaN/NA
+    assert float(result.loc[0, "DF (REAL)"]) == 92.3
+    assert pd.isna(result.loc[1, "DF (REAL)"])
+    assert pd.isna(result.loc[2, "DF (REAL)"])
+    assert float(result.loc[3, "DF (REAL)"]) == 88.0
+
+    # MTBF (REAL): index 1 (-10.0 < 0) is NaN/NA; others are valid
+    assert float(result.loc[0, "MTBF (REAL)"]) == 120.5
+    assert pd.isna(result.loc[1, "MTBF (REAL)"])
+
+    # Quality events were logged for deviations
+    events = result.attrs.get("data_quality_events", [])
+    event_fields = [e["campo"] for e in events]
+    assert "UF (META)" in event_fields
+    assert "DF (REAL)" in event_fields
+    assert "MTBF (REAL)" in event_fields
+
+
+def test_compute_real_vs_meta_calculates_gaps_and_achievement() -> None:
+    """Real vs Meta computes absolute difference, percentage deviation and status."""
+    from modelo_confiabilidade.relatorios import compute_real_vs_meta
+
+    frame = pd.DataFrame({
+        "MES": [pd.Period("2025-01", "M"), pd.Period("2025-02", "M")],
+        "EQUIPAMENTO": ["EQ-1", "EQ-1"],
+        "GRUPO": ["CAM57", "CAM57"],
+        "DF (REAL)": [90.0, 80.0],
+        "DF (META)": [85.0, 85.0],
+        "MTBF (REAL)": [120.0, 90.0],
+        "MTBF (META)": [100.0, 100.0],
+        "MTTR": [4.0, 7.0],
+        "MTTR (META)": [5.0, 5.0],
+    })
+
+    result = compute_real_vs_meta(frame)
+    assert not result.empty
+    assert {"indicador", "unidade", "desvio_absoluto", "desvio_percentual", "atingimento_percentual", "status_atingimento"}.issubset(result.columns)
+
+    df_rows = result[result["indicador"] == "DF"].reset_index(drop=True)
+    assert len(df_rows) == 2
+    # Row 0: 90 vs 85 -> desvio_abs = +5, atingimento = 90/85*100 = 105.88%, status ATINGIDO
+    assert df_rows.loc[0, "desvio_absoluto"] == 5.0
+    assert pytest.approx(df_rows.loc[0, "atingimento_percentual"], rel=1e-2) == 105.88
+    assert df_rows.loc[0, "status_atingimento"] == "ATINGIDO"
+    # Row 1: 80 vs 85 -> desvio_abs = -5, status NAO_ATINGIDO
+    assert df_rows.loc[1, "desvio_absoluto"] == -5.0
+    assert df_rows.loc[1, "status_atingimento"] == "NAO_ATINGIDO"
+
+    mttr_rows = result[result["indicador"] == "MTTR"].reset_index(drop=True)
+    # Row 0: MTTR 4.0 <= 5.0 -> ATINGIDO (menor é melhor)
+    assert mttr_rows.loc[0, "status_atingimento"] == "ATINGIDO"
+    # Row 1: MTTR 7.0 > 5.0 -> NAO_ATINGIDO
+    assert mttr_rows.loc[1, "status_atingimento"] == "NAO_ATINGIDO"
+
+
+def test_compute_indicator_correlations_prioritizes_mtbf_and_df() -> None:
+    """Correlations rank MTBF as top priority and DF as secondary priority."""
+    from modelo_confiabilidade.relatorios import compute_indicator_correlations
+
+    analytic = pd.DataFrame({
+        "MTBF (REAL)": [100.0, 110.0, 120.0, 130.0, 140.0],
+        "DF (REAL)": [85.0, 87.0, 89.0, 91.0, 93.0],
+        "MTBS (REAL)": [50.0, 55.0, 60.0, 65.0, 70.0],
+        "AMS_Contador__feature_a": [10.0, 20.0, 30.0, 40.0, 50.0],
+        "Backlog__feature_b": [5.0, 4.0, 3.0, 2.0, 1.0],
+    })
+
+    corr_df = compute_indicator_correlations(analytic)
+    assert not corr_df.empty
+    assert "prioridade_analitica" in corr_df.columns
+
+    # MTBF (REAL) rows must appear before other indicators
+    first_indicator = corr_df.iloc[0]["indicador"]
+    assert first_indicator == "MTBF (REAL)"
+    assert "MTBF" in corr_df.iloc[0]["prioridade_analitica"]
+
+
+def test_predictor_selection_excludes_meta_and_uf_columns() -> None:
+    """Predictor selection explicitly rejects META columns and UF columns."""
+    from modelo_confiabilidade.modelagem import _select_predictor_columns
+
+    frame = pd.DataFrame({
+        "DF (REAL)": [90.0, 92.0],
+        "DF (META)": [85.0, 85.0],
+        "UF (REAL)": [80.0, 82.0],
+        "UF (META)": [75.0, 75.0],
+        "MTBF (META)": [100.0, 100.0],
+        "operational_signal": [1.0, 2.0],
+    })
+
+    selected, excluded = _select_predictor_columns(frame, "DF (REAL)", frame.columns)
+
+    assert "operational_signal" in selected
+    assert "DF (META)" not in selected
+    assert "UF (REAL)" not in selected
+    assert "UF (META)" not in selected
+    assert "MTBF (META)" not in selected
+
+    excluded_features = {item["feature"]: item["motivo"] for item in excluded}
+    assert "meta" in excluded_features["DF (META)"].lower()
+    assert "uf" in excluded_features["UF (REAL)"].lower()
+    assert ("uf" in excluded_features["UF (META)"].lower() or "meta" in excluded_features["UF (META)"].lower())

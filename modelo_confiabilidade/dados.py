@@ -151,24 +151,45 @@ def normalize_indicator_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
         key = _column_key(column)
         if key in {"ANOMES", "EQUIPAMENTO"}:
             continue
-        numeric_values = pd.to_numeric(
-            result[column].astype("string").str.replace(",", ".", regex=False), errors="coerce"
-        )
+        raw_str = result[column].astype("string").str.replace(",", ".", regex=False)
+        numeric_values = pd.to_numeric(raw_str, errors="coerce")
         non_empty = result[column].notna() & result[column].astype("string").str.strip().ne("")
         clearly_numeric = non_empty.any() and numeric_values[non_empty].notna().mean() >= 0.95
         if key in _INDICATOR_NUMERIC_COLUMNS or clearly_numeric:
-            invalid_values = result.loc[non_empty & numeric_values.isna(), column].tolist()
-            if invalid_values:
+            # 1. Non-numeric invalid strings
+            invalid_str = non_empty & numeric_values.isna()
+
+            # 2. Infinite values (inf, -inf) -> process error, expurgated
+            inf_values = np.isinf(numeric_values)
+            numeric_values = numeric_values.mask(inf_values, np.nan)
+
+            # 3. Percentages (DF, UF, RO - both REAL and META) -> scale [0, 100]%
+            is_percentage = key.startswith(("DF", "UF", "RO")) or any(
+                token in key for token in ("DISPONIBILIDADE", "UTILIZACAO", "RENDIMENTO")
+            )
+            pct_out_of_bounds = pd.Series(False, index=result.index)
+            if is_percentage:
+                pct_out_of_bounds = numeric_values.notna() & ((numeric_values < 0) | (numeric_values > 100))
+                numeric_values = numeric_values.mask(pct_out_of_bounds, np.nan)
+
+            # 4. Non-negative indicator fields (MTBF, MTBS, MTTR, NIC, HT, HM, HMC, HO, HAC, MPS, MPNS) -> >= 0
+            neg_invalid = pd.Series(False, index=result.index)
+            if not is_percentage and any(
+                token in key for token in ("MTBF", "MTBS", "MTTR", "NIC", "HT", "HM", "HMC", "HO", "HAC", "MPS", "MPNS")
+            ):
+                neg_invalid = numeric_values.notna() & (numeric_values < 0)
+                numeric_values = numeric_values.mask(neg_invalid, np.nan)
+
+            anomalies = invalid_str | inf_values | pct_out_of_bounds | neg_invalid
+            if anomalies.any():
+                invalid_samples = result.loc[anomalies, column].astype(str).tolist()
                 coercion_events.append({
                     "fonte": source,
                     "campo": column,
-                    "contagem": len(invalid_values),
-                    "amostra": [str(value) for value in invalid_values[:3]],
+                    "contagem": int(anomalies.sum()),
+                    "amostra": [str(value) for value in invalid_samples[:3]],
                 })
-            result[column] = pd.to_numeric(
-                result[column].astype("string").str.replace(",", ".", regex=False),
-                errors="coerce",
-            )
+            result[column] = numeric_values
     result = result.reset_index(drop=True)
     result.attrs["data_quality_events"] = coercion_events
     return result
@@ -719,10 +740,19 @@ def create_lag_features(
         raise DataValidationError("Lags requerem as colunas GRUPO e MES")
     canonical_responses = set(response_columns or ()) | {
         "DF (REAL)",
+        "DF (META)",
         "MTBF (REAL)",
+        "MTBF (META)",
         "MTBS (REAL)",
+        "MTBS (META)",
         "MTTR",
+        "MTTR (META)",
         "NIC (VMINA)",
+        "NIC (META)",
+        "UF (REAL)",
+        "UF (META)",
+        "RO (REAL)",
+        "RO (META)",
     }
     response_keys = {_column_key(column) for column in canonical_responses}
     source_metadata = frame.attrs.get("feature_metadata")

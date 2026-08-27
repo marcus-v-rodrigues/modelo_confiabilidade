@@ -43,7 +43,22 @@ Cada feature gerada no pipeline possui uma linha de metadados registrada na base
 
 ---
 
-## 4. Chaves Primárias e Alinhamento
+## 4. Catálogo de Indicadores e Variáveis de Confiabilidade
+
+| Indicador | Unidade | Escala | Papel no Pipeline | Descrição |
+| :--- | :---: | :---: | :--- | :--- |
+| **`DF (REAL)`** | `%` | `[0, 100]` | Resposta Preditiva ($t+1$) e Correlação | Disponibilidade Física apurada. Impacto de manutenção preventiva. |
+| **`MTBF (REAL)`** | Horas | $\ge 0$ | Resposta Preditiva ($t+1$) e Foco Principal de Correlação | Mean Time Between Failures apurado (tempo médio entre falhas). |
+| **`MTBS (REAL)`** | Horas | $\ge 0$ | Resposta Preditiva ($t+1$) | Mean Time Between Stops (tempo médio entre paradas). |
+| **`MTTR`** | Horas | $\ge 0$ | Resposta Preditiva ($t+1$) | Mean Time to Repair (tempo médio de reparo). |
+| **`NIC (VMINA)`** | Quantidade | $\ge 0$ | Resposta Preditiva ($t+1$) | Número de Intervenções Corretivas não planejadas. |
+| **`UF (REAL)`** | `%` | `[0, 100]` | Avaliação Real x Meta (Excluído da Previsão) | Utilização Física apurada. Impacto de planejamento operacional. |
+| **`RO (REAL)`** | `%` | `[0, 100]` | Avaliação Real x Meta | Rendimento Operacional apurado. |
+| **`* (META)`** | Variada | Conforme métrica | Avaliação Real x Meta (Excluído dos Preditores) | Metas corporativas de planejamento para DF, MTBF, MTBS, MTTR, NIC, UF, RO, HT, HM, HMC. |
+
+---
+
+## 5. Chaves Primárias e Alinhamento
 
 | Chave | Tipo | Descrição |
 | :--- | :--- | :--- |

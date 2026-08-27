@@ -62,7 +62,11 @@ def _eligible_explanation_features(
         item = metadata_by_feature.get(feature, {})
         reason = ""
         feature_key = _column_key(feature)
-        if (
+        if "META" in feature_key:
+            reason = "meta de planejamento (reservada para real x meta)"
+        elif feature_key.startswith("UF") or "UTILIZACAO" in feature_key:
+            reason = "indicador UF desconsiderado da modelagem preditiva"
+        elif (
             feature == response
             or any(token in feature_key for token in response_keys if token)
             or any(token in feature_key for token in ("TARGET", "RESPONSE", "RESPOSTA"))

@@ -25,7 +25,13 @@ from .diagnosticos import (
     run_statistical_diagnostics,
 )
 from .modelagem import _temporal_validation_audit, run_temporal_validation
-from .relatorios import generate_plots, save_results, write_final_report
+from .relatorios import (
+    compute_indicator_correlations,
+    compute_real_vs_meta,
+    generate_plots,
+    save_results,
+    write_final_report,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -174,10 +180,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "classificacao": "INVALIDO",
                     "motivo": f"erro por resposta: {exc}",
                 })
+        real_vs_meta_frame = compute_real_vs_meta(analysis_indicators)
+        correlations_frame = compute_indicator_correlations(
+            analytic,
+            feature_columns=lag_metadata["feature"].tolist() if "feature" in lag_metadata.columns else None,
+            response_columns=response_columns,
+        )
         results.update({
             "status": "completed",
             "audit": audit,
             "base_analitica": analytic,
+            "real_x_meta": real_vs_meta_frame,
+            "correlacoes": correlations_frame,
             "metricas": pd.concat(metric_frames, ignore_index=True) if metric_frames else pd.DataFrame(),
             "previsoes": pd.concat(prediction_frames, ignore_index=True) if prediction_frames else pd.DataFrame(),
             "coeficientes": pd.concat(coefficient_frames, ignore_index=True) if coefficient_frames else pd.DataFrame(),

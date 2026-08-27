@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping
 
+import numpy as np
 import pandas as pd
 
 from .configuracao import (
@@ -61,13 +62,15 @@ def audit_data_quality(sources: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
         recorded_coercions = set()
         for event in frame.attrs.get("data_quality_events", []):
             recorded_coercions.add(event["campo"])
+            key = _column_key(event["campo"])
+            severity = "ERROR" if key in _INDICATOR_NUMERIC_COLUMNS else "WARNING"
             add(
                 source,
                 "coercao",
                 event["campo"],
                 event["contagem"],
-                "ERROR",
-                f"Valores originais invalidos: {event['amostra']}",
+                severity,
+                f"Valores originais invalidos ou expurgados: {event['amostra']}",
             )
         for column in data.columns:
             add(source, "dtype", column, str(data[column].dtype), "INFO", "Tipo estrutural observado")
@@ -107,6 +110,16 @@ def audit_data_quality(sources: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                         "WARNING" if invalid_values else "INFO",
                         f"Coercao numerica; amostra: {invalid_values[:3]}",
                     )
+                if np.isinf(numeric).any():
+                    severity = "ERROR" if key in _INDICATOR_NUMERIC_COLUMNS else "WARNING"
+                    add(
+                        source,
+                        "infinitos",
+                        column,
+                        int(np.isinf(numeric).sum()),
+                        severity,
+                        "Valores infinitos encontrados (erro no processo; expurgados)",
+                    )
                 if (numeric < 0).any():
                     add(
                         source,
@@ -124,7 +137,7 @@ def audit_data_quality(sources: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                         column,
                         int((numeric > 100).sum()),
                         severity,
-                        "Percentual acima de 100",
+                        "Percentual acima de 100 (escala oficial 0 a 100%)",
                     )
 
         if source in INDICATOR_FILES:

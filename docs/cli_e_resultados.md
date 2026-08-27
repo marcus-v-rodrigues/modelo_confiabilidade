@@ -75,12 +75,15 @@ Após a execução, o diretório configurado em `--output-dir` conterá:
 * **`previsoes.csv`**: Série temporal completa de valores reais observados vs valores previstos por modelo para cada grupo e mês.
 * **`classificacao.csv`**: Classificação conclusiva (`VALIDO`, `EXPLORATORIO`, `INVALIDO`) e justificativas para cada um dos 5 indicadores.
 
-### Arquivos de Explicabilidade e Diagnósticos
-* **`importancia.csv`**: Ranking de importância preditiva das variáveis operacionais no conjunto de teste OOS.
-* **`coeficientes.csv`**: Coeficientes lineares regularizados do modelo Elastic Net.
-* **`diagnosticos.csv`**: Resultados dos testes de multicolinearidade (VIF), normalidade e autocorrelação de resíduos.
-* **`features_excluidas.csv`**: Lista de variáveis operacionais que foram descartadas (ex.: por vazamento temporal, cardinalidade ou esparsidade) e o motivo do descarte.
-* **`cobertura_temporal.csv`**: Auditoria do horizonte temporal coberto por cada fonte e universo.
+### Arquivos de Explicabilidade, Correlação e Diagnósticos
+* **`real_x_meta.csv`**: Comparativo detalhado de **Real x Meta** (desvio absoluto, desvio percentual e percentual de atingimento) para todos os indicadores disponíveis.
+* **`correlacoes_indicadores.csv`**: Ranking de correlação (Pearson e Spearman) entre variáveis operacionais e indicadores de confiabilidade, priorizando **MTBF** (foco principal) e **DF** (secundário).
+* **`importancia_variaveis.csv`**: Ranking de importância preditiva das variáveis operacionais no conjunto de teste OOS.
+* **`coeficientes_elastic_net.csv`**: Coeficientes lineares regularizados do modelo Elastic Net.
+* **`diagnosticos_estatisticos.csv`**: Resultados dos testes de multicolinearidade (VIF), normalidade e autocorrelação de resíduos.
+* **`features_excluidas.csv`**: Lista de variáveis operacionais que foram descartadas (ex.: por vazamento temporal, cardinalidade, metas ou esparsidade) e o motivo do descarte.
+* **`cobertura_temporal_validacao.csv`**: Auditoria do horizonte temporal coberto por cada fonte e universo.
+* **`mapeamento_features.csv`**: Catálogo completo de metadados, transformações e status semântico de cada feature gerada.
 
 ### Relatório Textual e Visualizações
 * **`relatorio_final.txt`**: Relatório executivo consolidado com diagnóstico das fontes, performance comparativa contra o baseline, ranking de variáveis explicativas e recomendações.

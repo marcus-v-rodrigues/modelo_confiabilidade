@@ -101,3 +101,18 @@ A performance de cada modelo é calculada tanto no treino quanto no teste OOS:
 * **$R^2$ (Coeficiente de Determinação):** Proporção da variância do indicador explicada pelas features operacionais.
 * **Melhoria sobre o Baseline:** Ganho percentual no MAE em comparação ao baseline ingênuo:
   $$\text{Melhoria} = \frac{\text{MAE}_{\text{baseline}} - \text{MAE}_{\text{modelo}}}{\text{MAE}_{\text{baseline}}}$$
+
+---
+
+## 7. Análise de Correlação e Priorização (MTBF e DF)
+
+* Conforme as diretrizes de confiabilidade, o cálculo preditivo exclui `UF` e foca em **`MTBF`** e **`DF`** para as correlações com os sinais operacionais (AMS, AMC, APR, Backlog).
+* Caso seja necessário eleger um único indicador representativo, **`MTBF`** é a principal referência por refletir diretamente a confiabilidade intrínseca contra falhas.
+* Os resultados são exportados em `correlacoes_indicadores.csv`.
+
+---
+
+## 8. Módulo de Comparação Real x Meta
+
+* As colunas de planejamento `(META)` são segregadas dos preditores e direcionadas para apurar a eficácia operacional corporativa (**Real x Meta**).
+* Para cada indicador (`DF`, `MTBF`, `MTBS`, `MTTR`, `NIC`, `UF`, `RO`, `HT`, `HM`, `HMC`), calculam-se desvios absolutos, desvios percentuais e percentual de atingimento da meta em `real_x_meta.csv`.

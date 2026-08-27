@@ -71,8 +71,13 @@ def _select_predictor_columns(
     selected: list[str] = []
     excluded: list[dict[str, str]] = []
     for column in dict.fromkeys(requested):
+        column_key = _column_key(str(column))
         if column not in frame.columns:
             excluded.append({"feature": str(column), "motivo": "preditor ausente"})
+        elif "META" in column_key:
+            excluded.append({"feature": str(column), "motivo": "meta de planejamento (reservada para real x meta)"})
+        elif column_key.startswith("UF") or "UTILIZACAO" in column_key:
+            excluded.append({"feature": str(column), "motivo": "indicador UF desconsiderado da modelagem preditiva"})
         elif column in {response, "_target"} or _is_reliability_response_feature(
             column, metadata_by_feature
         ):

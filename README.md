@@ -25,15 +25,18 @@ Este pacote implementa um modelo de **Machine Learning de previsão temporal ($t
 
 ---
 
-## 2. Indicadores Modelados
+## 2. Indicadores Modelados e Definições Oficiais
 
-O modelo estima cinco métricas vitais por grupo de equipamentos:
+O modelo apura e projeta métricas fundamentais por grupo e equipamento com suas unidades e escalas oficiais:
 
-1. **`DF (REAL)` — Disponibilidade Física Real:** Proporção do tempo em que os equipamentos estão mecanicamente aptos para operação.
-2. **`MTBF (REAL)` — Mean Time Between Failures:** Tempo médio de operação contínua entre ocorrências de falhas corretivas.
-3. **`MTBS (REAL)` — Mean Time Between Stops:** Tempo médio entre quaisquer paradas (preventivas ou corretivas).
-4. **`MTTR` — Mean Time To Repair:** Duração média necessária para reparar um equipamento após uma parada.
-5. **`NIC (VMINA)` — Número de Intervenções Corretivas:** Contagem de manutenções não programadas no mês.
+1. **`DF (REAL)` — Disponibilidade Física Real (`%`, escala `[0, 100]`):** Proporção do tempo em que os equipamentos estão mecanicamente aptos para operação ($\text{DF} = (\text{Tempo disponível} / \text{Tempo total}) \times 100$). Impactada diretamente pela **manutenção preventiva**.
+2. **`MTBF (REAL)` — Mean Time Between Failures (`Horas`, escala $\ge 0$):** Tempo médio de operação contínua entre ocorrências de falhas corretivas. **Foco prioritário de correlação**.
+3. **`MTBS (REAL)` — Mean Time Between Stops (`Horas`, escala $\ge 0$):** Tempo médio entre paradas (preventivas ou corretivas).
+4. **`MTTR` — Mean Time To Repair (`Horas`, escala $\ge 0$):** Duração média necessária para reparar um equipamento após uma parada.
+5. **`NIC (VMINA)` — Número de Intervenções Corretivas (`Quantidade`, escala $\ge 0$):** Contagem de manutenções corretivas não programadas no mês.
+6. **`UF (REAL)` — Utilização Física (`%`, escala `[0, 100]`):** Proporção do tempo disponível efetivamente trabalhado ($\text{UF} = (\text{Tempo trabalhado} / \text{Tempo disponível}) \times 100$). Impactada pelo **planejamento operacional**; desconsiderada da previsão temporal ($t+1$).
+7. **`RO (REAL)` — Rendimento Operacional (`%`, escala `[0, 100]`):** Rendimento e produtividade operacional efetiva.
+8. **Análise Real x Meta (`real_x_meta.csv`):** As colunas de meta `(META)` são segregadas dos preditores (sem vazamento) e utilizadas para comparar o atingimento real versus o planejamento corporativo.
 
 ---
 
@@ -177,7 +180,7 @@ Quando a execução finaliza, o diretório de saída contém:
 
 ## 9. Como Executar a Suíte de Testes
 
-O projeto possui 101 testes automatizados cobrindo leitura, auditoria, derivação de `TPLNR`, integridade temporal e modelagem:
+O projeto possui 105 testes automatizados cobrindo leitura, auditoria, derivação de `TPLNR`, integridade temporal, expurgo de desvios, análise Real x Meta e modelagem:
 
 ```bash
 # Execução simples
