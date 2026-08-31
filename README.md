@@ -117,6 +117,17 @@ python -m modelo_confiabilidade \
   --random-state 42
 ```
 
+### Execução usando a RTX/NVIDIA (CUDA)
+
+O Elastic Net continua na CPU; o modelo de árvores usa XGBoost com CUDA:
+
+```bash
+python -m modelo_confiabilidade --device cuda
+```
+
+Requer driver NVIDIA funcional e `xgboost>=2.0` instalado. O modo padrão (`--device cpu`)
+continua usando Random Forest do scikit-learn para manter comparabilidade com execuções anteriores.
+
 ### Visualizar Todas as Opções e Ajuda da CLI
 
 ```bash
@@ -134,6 +145,7 @@ python -m modelo_confiabilidade --help
 | **`--test-months`**              |      `3`      | Meses finais reservados para teste fora da amostra (OOS).                                                                    |
 | **`--max-lag`**                  |      `6`      | Defasagem histórica máxima ($t-1$ a $t-6$) das features operacionais.                                                  |
 | **`--random-state`**             |      `42`      | Semente para garantir reprodutibilidade matemática dos modelos.                                                             |
+| **`--device`**                   |    `cpu`       | `cpu` usa Random Forest; `cuda` usa o modelo de árvores do XGBoost na GPU NVIDIA.                                           |
 | **`--group-map-file`**           |     `None`     | *Opcional:* Caminho para CSV de mapeamento explícito. Se omitido, o agrupamento é derivado automaticamente do `TPLNR`. |
 | **`--min-train-rows`**           |      `30`      | Quantidade mínima de linhas de treino necessárias.                                                                         |
 | **`--min-test-rows`**            |      `10`      | Quantidade mínima de observações no teste OOS.                                                                            |

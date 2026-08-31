@@ -52,6 +52,7 @@ class Config:
     test_months: int = 3
     max_lag: int = 6
     random_state: int = 42
+    device: str = "cpu"
     group_map_file: Path | None = None
     min_train_rows: int = 30
     min_test_rows: int = 10
@@ -119,6 +120,12 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         type=_positive_int,
         default=42,
         help="Semente pseudoaleatoria para reprodutibilidade dos modelos e importancias (default: 42).",
+    )
+    parser.add_argument(
+        "--device",
+        choices=("cpu", "cuda"),
+        default="cpu",
+        help="Dispositivo do modelo de arvores: cpu (Random Forest) ou cuda (GPU, via XGBoost) (default: cpu).",
     )
     parser.add_argument(
         "--group-map-file",

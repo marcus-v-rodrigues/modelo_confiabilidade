@@ -17,6 +17,15 @@ python -m modelo_confiabilidade \
   --max-lag 6
 ```
 
+Para usar uma GPU NVIDIA (CUDA) no modelo de árvores:
+
+```bash
+python -m modelo_confiabilidade --device cuda
+```
+
+Esse modo requer `xgboost>=2.0`; o Elastic Net permanece na CPU. `--device cpu` mantém o
+Random Forest original.
+
 ---
 
 ## 2. Referência Completa de Parâmetros da CLI
@@ -28,6 +37,7 @@ python -m modelo_confiabilidade \
 | **`--test-months`** | `int` | `3` | Quantidade de meses finais reservados para o teste fora da amostra (OOS). |
 | **`--max-lag`** | `int` | `6` | Número máximo de meses de defasagem histórica ($t-1$ até $t-6$) gerados para as features. |
 | **`--random-state`** | `int` | `42` | Semente para garantir reprodutibilidade exata em modelos e permutações estocásticas. |
+| **`--device`** | `str` | `cpu` | `cpu` usa Random Forest; `cuda` usa XGBoost com aceleração CUDA no modelo de árvores. |
 | **`--group-map-file`** | `Path` | `None` | *Opcional:* Caminho para CSV de mapeamento manual (`EQUIPAMENTO`/`TPLNR` $\to$ `GRUPO`). Omitir para usar a regra padrão por hierarquia `TPLNR`. |
 | **`--min-train-rows`** | `int` | `30` | Mínimo de observações necessárias no treino para permitir o ajuste de modelos. |
 | **`--min-test-rows`** | `int` | `10` | Mínimo de observações necessárias no teste OOS para validação estatística. |

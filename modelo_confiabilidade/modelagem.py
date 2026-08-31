@@ -167,9 +167,18 @@ def calculate_regression_metrics(
     }
 
 
-def build_model_pipeline(model_name: str, random_state: int) -> Pipeline:
-    """Build a leakage-safe preprocessing and estimator pipeline."""
+def build_model_pipeline(
+    model_name: str, random_state: int, device: str = "cpu"
+) -> Pipeline:
+    """Build a leakage-safe preprocessing and estimator pipeline.
+
+    ``device='cuda'`` uses XGBoost's histogram implementation for the tree
+    model.  It is intentionally opt-in: the default remains sklearn's Random
+    Forest so existing results stay comparable.
+    """
     normalized = model_name.lower().replace("-", "_").replace(" ", "_")
+    if device not in {"cpu", "cuda"}:
+        raise ValueError(f"Dispositivo nao suportado: {device}")
     # keep_empty_features=True: colunas sem nenhum valor observado em uma janela de treino
     # sao retidas (preenchidas com zero) em vez de descartadas silenciosamente pelo imputer.
     if normalized in {"elastic_net", "elasticnet"}:
@@ -179,9 +188,28 @@ def build_model_pipeline(model_name: str, random_state: int) -> Pipeline:
             ("model", ElasticNet(random_state=random_state, max_iter=10000)),
         ])
     if normalized in {"random_forest", "randomforest"}:
+        if device == "cuda":
+            try:
+                from xgboost import XGBRegressor
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Modo CUDA requer xgboost instalado (pip install 'xgboost>=2.0')."
+                ) from exc
+            # XGBoost e uma floresta de arvores GPU-compatível, mas nao e o
+            # RandomForest sklearn; por isso o modo CUDA e explicitamente opt-in.
+            estimator = XGBRegressor(
+                random_state=random_state,
+                tree_method="hist",
+                device="cuda",
+                n_jobs=0,
+                objective="reg:squarederror",
+                verbosity=0,
+            )
+        else:
+            estimator = RandomForestRegressor(random_state=random_state, n_jobs=-1)
         return Pipeline([
             ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-            ("model", RandomForestRegressor(random_state=random_state, n_jobs=-1)),
+            ("model", estimator),
         ])
     raise ValueError(f"Modelo nao suportado: {model_name}")
 
@@ -260,15 +288,20 @@ def _fit_search(
     periods: pd.Series,
     random_state: int,
     n_splits: int,
+    device: str = "cpu",
 ) -> tuple[Pipeline, dict[str, Any]]:
-    pipeline = build_model_pipeline(model_name, random_state)
+    pipeline = build_model_pipeline(model_name, random_state, device=device)
     if n_splits < 2:
         pipeline.fit(X, y)
         return pipeline, {}
     if model_name == "elastic_net":
         grid = {"model__alpha": [0.1, 1.0], "model__l1_ratio": [0.2, 0.8]}
     else:
-        grid = {"model__n_estimators": [50], "model__max_depth": [None, 5]}
+        grid = (
+            {"model__n_estimators": [50], "model__max_depth": [None, 5]}
+            if device == "cpu"
+            else {"model__n_estimators": [100], "model__max_depth": [0, 5]}
+        )
     splitter = _PeriodTimeSeriesSplit(n_splits, periods.tolist())
     folds = list(splitter.split(X))
     if len(folds) < 2:
@@ -448,6 +481,7 @@ def run_temporal_validation(
                 fit_frame["_target_period"],
                 config.random_state,
                 min(2, len(pd.Index(fit_frame["_target_period"].unique())) - 1),
+                device=config.device,
             )
             estimator.fit(fit_frame[feature_columns], fit_frame["_target"])
             predicted = pd.Series(
@@ -504,6 +538,7 @@ def run_temporal_validation(
             train["_target_period"],
             config.random_state,
             n_splits,
+            device=config.device,
         )
         predicted_test = pd.Series(
             final_estimator.predict(final_test[feature_columns]), index=final_test.index
