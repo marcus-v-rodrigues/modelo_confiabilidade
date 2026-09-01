@@ -42,7 +42,7 @@ def _is_reliability_response_feature(
     column: str,
     metadata_by_feature: Mapping[str, Mapping[str, object]],
 ) -> bool:
-    """Identify a canonical response or any feature explicitly derived from one."""
+    """Identifica a resposta canônica ou uma feature explicitamente derivada dela."""
     response_keys = {_column_key(name) for name in CANONICAL_RELIABILITY_RESPONSES}
     details = metadata_by_feature.get(column, {})
     values = (column, details.get("campo_original", ""), details.get("papel", ""))
@@ -58,7 +58,8 @@ def _select_predictor_columns(
     response: str,
     predictor_columns: Sequence[str] | None,
 ) -> tuple[list[str], list[dict[str, str]]]:
-    """Select only numeric operational predictors and audit every rejection."""
+    """Seleciona preditores operacionais numéricos e audita cada rejeição."""
+    # Metadados controlam quais colunas são operacionalmente elegíveis.
     source_metadata = frame.attrs.get("feature_metadata", pd.DataFrame())
     metadata_by_feature: dict[str, Mapping[str, object]] = {}
     if isinstance(source_metadata, pd.DataFrame) and "feature" in source_metadata.columns:
@@ -106,7 +107,7 @@ def _operational_coverage_mask(
 def calculate_regression_metrics(
     y_true: pd.Series, y_pred: pd.Series, n_features: int
 ) -> dict[str, float]:
-    """Calculate regression metrics without inventing values for undefined cases."""
+    """Calcula métricas de regressão sem inventar valores para casos indefinidos."""
     actual = pd.to_numeric(pd.Series(y_true), errors="coerce")
     predicted = pd.to_numeric(pd.Series(y_pred), errors="coerce")
     valid = actual.notna() & predicted.notna()
@@ -326,7 +327,7 @@ def run_temporal_validation(
     config: Config,
     predictor_columns: Sequence[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """Train models with chronological splits and an explicit predictor contract."""
+    """Treina modelos com divisões cronológicas e contrato explícito de preditores."""
     empty_predictions = pd.DataFrame(columns=PREDICTION_COLUMNS + ["GRUPO"])
     empty_splits = pd.DataFrame(columns=[
         "divisao",
@@ -467,6 +468,7 @@ def run_temporal_validation(
     metric_records: list[dict[str, Any]] = []
     for model_name in ("elastic_net", "random_forest"):
         oof_predictions: list[pd.DataFrame] = []
+        # A validação acumula métricas por janela para permitir auditoria temporal.
         fold_metrics: list[dict[str, float]] = []
         oof_splitter = _PeriodTimeSeriesSplit(n_splits, train["_target_period"].tolist())
         for fold, (fit_indices, validation_indices) in enumerate(

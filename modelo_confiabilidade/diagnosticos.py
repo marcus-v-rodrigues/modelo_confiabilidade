@@ -39,7 +39,7 @@ EXPLANATION_COLUMNS = [
 def _eligible_explanation_features(
     frame: pd.DataFrame, response: str
 ) -> tuple[list[str], dict[str, dict[str, object]], list[dict[str, str]]]:
-    """Select only numeric, metadata-approved features and record exclusions."""
+    """Seleciona features numéricas aprovadas pelos metadados e registra exclusões."""
     metadata = frame.attrs.get("feature_metadata", pd.DataFrame())
     has_metadata = isinstance(metadata, pd.DataFrame) and "feature" in metadata.columns
     metadata_by_feature = metadata.set_index("feature").to_dict("index") if has_metadata else {}
@@ -136,7 +136,7 @@ def _eligible_explanation_features(
 def _oos_validation_status(
     train_frame: pd.DataFrame, validation_frame: pd.DataFrame | None
 ) -> tuple[bool, str]:
-    """Prove an explicit OOS marker and disjoint row keys before permutation."""
+    """Confirma o marcador OOS e chaves de linhas disjuntas antes da permutação."""
     if validation_frame is None:
         return False, "validation_frame ausente"
     attrs_marker = validation_frame.attrs.get("fora_amostra") is True
@@ -177,7 +177,7 @@ def run_statistical_diagnostics(
     response: str,
     algebra_relations: Sequence[Mapping[str, object]] | Mapping[str, object] | None = None,
 ) -> pd.DataFrame:
-    """Run independent checks, preserving a status row for every check."""
+    """Executa verificações independentes, preservando uma linha de status por teste."""
     rows: list[dict[str, object]] = []
 
     def record(
@@ -454,7 +454,7 @@ def extract_model_explanations(
     estimator: Pipeline | None = None,
     response_column: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Return model coefficients and validation permutation rankings."""
+    """Retorna coeficientes do modelo e rankings de permutação da validação."""
     features, meta_by_feature, excluded = _eligible_explanation_features(train_frame, response)
     forecast_features = train_frame.attrs.get("feature_columns")
     if forecast_features:
@@ -604,7 +604,7 @@ def classify_validity(
     metadata: pd.DataFrame,
     config: Config,
 ) -> dict[str, str]:
-    """Classify only on out-of-sample test evidence and explicit metadata."""
+    """Classifica somente com evidências OOS e metadados explícitos."""
     result = {"classificacao": "INVALIDO", "motivo": "avaliacao fora da amostra nao confiavel"}
     if metrics.empty or "fora_amostra" not in metrics.columns:
         result["motivo"] = "fora_amostra ausente; avaliacao nao confiavel"

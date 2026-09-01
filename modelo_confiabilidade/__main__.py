@@ -36,11 +36,12 @@ from .relatorios import (
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run audit, group mapping, temporal modeling, persistence and reporting."""
+    """Executa auditoria, mapeamento, modelagem temporal, persistência e relatórios."""
     config = parse_args(argv)
     logger = configure_logging(config.output_dir)
     results: dict[str, Any] = {"status": "failed", "audit": pd.DataFrame(columns=AUDIT_COLUMNS)}
     try:
+        # Primeiro carregamos e normalizamos as fontes para aplicar o mesmo contrato de dados.
         indicators = load_indicator_files(config.input_dir)
         operational = load_operational_files(config.input_dir)
         normalized_indicators = {
@@ -99,6 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_final_report(results, config.output_dir)
             logger.error("Mapeamento de grupo interrompe o pipeline: %s", exc)
             return 1
+        # A partir daqui, transformamos as fontes mapeadas na base analítica temporal.
         analysis_indicators = _indicator_analysis_frame(mapped_indicators)
         features, feature_metadata, excluded = build_operational_features(
             mapped_operational, {"reference_frame": analysis_indicators}
@@ -140,6 +142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 len(lag_feature_columns),
                 len(lag_metadata),
             )
+        # Cada lista acumula os artefatos produzidos para um tipo de resultado.
         metric_frames: list[pd.DataFrame] = []
         prediction_frames: list[pd.DataFrame] = []
         diagnostic_frames: list[pd.DataFrame] = []

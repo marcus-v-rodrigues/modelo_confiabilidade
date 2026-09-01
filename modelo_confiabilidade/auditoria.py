@@ -20,10 +20,12 @@ AUDIT_COLUMNS = ["fonte", "categoria", "campo", "valor", "severidade", "mensagem
 
 
 def audit_data_quality(sources: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
-    """Report structural quality issues without requiring semantic mappings."""
+    """Relata problemas estruturais sem exigir mapeamentos semânticos."""
+    # Mantemos cada achado separado para preservar rastreabilidade e severidade.
     findings: list[dict[str, object]] = []
     periods: dict[str, set[pd.Period]] = {}
 
+    # Centraliza a criação dos registros para manter o esquema uniforme.
     def add(
         source: str,
         category: str,
@@ -206,7 +208,7 @@ def audit_data_quality(sources: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def _write_quality_reports(audit: pd.DataFrame, output_dir: Path) -> None:
-    """Persist the canonical audit under both names used by the pipeline."""
+    """Persiste a auditoria canônica sob os dois nomes usados pelo pipeline."""
     for filename in ("auditoria_qualidade.csv", "relatorio_qualidade_dados.csv"):
         audit.to_csv(output_dir / filename, index=False, encoding="utf-8-sig")
 

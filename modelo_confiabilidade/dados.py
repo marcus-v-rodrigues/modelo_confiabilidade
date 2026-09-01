@@ -36,7 +36,7 @@ def _read_required(
     reader: str,
     **kwargs: object,
 ) -> dict[str, pd.DataFrame]:
-    """Read a named collection and convert failures to actionable errors."""
+    """Lê uma coleção nomeada e converte falhas em erros acionáveis."""
     loaded: dict[str, pd.DataFrame] = {}
     for source, filename in files.items():
         path = input_dir / filename
@@ -80,12 +80,12 @@ def _read_required(
 
 
 def load_indicator_files(input_dir: Path) -> dict[str, pd.DataFrame]:
-    """Load the four indicator workbooks from ``input_dir``."""
+    """Carrega as quatro planilhas de indicadores de ``input_dir``."""
     return _read_required(input_dir, INDICATOR_FILES, "excel")
 
 
 def load_operational_files(input_dir: Path) -> dict[str, pd.DataFrame]:
-    """Load the five operational CSV exports from ``input_dir``."""
+    """Carrega os cinco CSVs operacionais de ``input_dir``."""
     return _read_required(input_dir, OPERATIONAL_FILES, "csv")
 
 
@@ -102,6 +102,7 @@ def _column_key(value: object) -> str:
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Trim column labels while preserving their spelling and accents."""
+    # Trabalhamos sobre uma cópia para não modificar a fonte recebida.
     result = df.copy()
     result.columns = [
         " ".join(str(column).lstrip("\ufeff").strip().split())
@@ -111,7 +112,7 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def parse_month_series(series: pd.Series, column_name: str) -> pd.Series:
-    """Parse common YYYYMM and YYYY-MM values into monthly periods."""
+    """Converte valores YYYYMM e YYYY-MM comuns em períodos mensais."""
     values = series.astype("string").str.strip()
     compact = values.str.replace(r"^(\d{4})[-/]?(\d{2})$", r"\1\2", regex=True)
     parsed = pd.to_datetime(compact, format="%Y%m", errors="coerce")
@@ -124,6 +125,7 @@ def parse_month_series(series: pd.Series, column_name: str) -> pd.Series:
 
 def normalize_indicator_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
     """Clean structural rows and safely coerce known indicator measures."""
+    # Normaliza rótulos antes de validar linhas e converter medidas.
     result = normalize_columns(df)
     if result.empty:
         return result
@@ -163,14 +165,14 @@ def normalize_indicator_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
         non_empty = result[column].notna() & result[column].astype("string").str.strip().ne("")
         clearly_numeric = non_empty.any() and numeric_values[non_empty].notna().mean() >= 0.95
         if key in _INDICATOR_NUMERIC_COLUMNS or clearly_numeric:
-            # 1. Non-numeric invalid strings
+            # 1. Identifica textos não numéricos inválidos.
             invalid_str = non_empty & numeric_values.isna()
 
-            # 2. Infinite values (inf, -inf) -> process error, expurgated
+            # 2. Registra infinitos (inf, -inf) como erro de processo e os expurga.
             inf_values = np.isinf(numeric_values)
             numeric_values = numeric_values.mask(inf_values, np.nan)
 
-            # 3. Percentages (DF, UF, RO - both REAL and META) -> scale [0, 100]%
+            # 3. Valida percentuais (DF, UF e RO, REAL e META) na escala [0, 100].
             is_percentage = key.startswith(("DF", "UF", "RO")) or any(
                 token in key for token in ("DISPONIBILIDADE", "UTILIZACAO", "RENDIMENTO")
             )
@@ -179,7 +181,7 @@ def normalize_indicator_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
                 pct_out_of_bounds = numeric_values.notna() & ((numeric_values < 0) | (numeric_values > 100))
                 numeric_values = numeric_values.mask(pct_out_of_bounds, np.nan)
 
-            # 4. Non-negative indicator fields (MTBF, MTBS, MTTR, NIC, HT, HM, HMC, HO, HAC, MPS, MPNS) -> >= 0
+            # 4. Valida indicadores não negativos (MTBF, MTBS, MTTR, NIC, HT, HM, HMC, HO, HAC, MPS e MPNS).
             neg_invalid = pd.Series(False, index=result.index)
             if not is_percentage and any(
                 token in key for token in ("MTBF", "MTBS", "MTTR", "NIC", "HT", "HM", "HMC", "HO", "HAC", "MPS", "MPNS")
@@ -801,7 +803,7 @@ def create_lag_features(
     max_lag: int,
     response_columns: Sequence[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Create current and historical values within each group only.
+    """Cria valores atuais e históricos somente dentro de cada grupo.
 
     Response columns are rejected explicitly. They can be supplied through
     ``response_columns``; otherwise canonical reliability response names and

@@ -252,10 +252,10 @@ Quando a execução finaliza, o diretório de saída contém:
 * **`relatorio_final.txt`**: Relatório executivo completo em formato texto com diagnósticos, performance dos modelos e recomendações.
 * **`auditoria_qualidade.csv`**: Registro auditável de todas as colunas, tipos, nulos e anomalias estruturais.
 * **`base_analitica.csv`**: Base consolidada de treino e teste com alvos ($t+1$) e variáveis operacionais defasadas.
-* **`metricas.csv`**: MAE, RMSE, MAPE e $R^2$ de cada modelo no treino e no teste fora da amostra (OOS).
-* **`previsoes.csv`**: Comparativo mensal por grupo entre o valor real e os valores previstos por cada modelo.
-* **`importancia.csv`**: Ranking de importância preditiva das variáveis operacionais no teste OOS.
-* **`classificacao.csv`**: Parecer final do modelo para cada variável (`VALIDO`, `EXPLORATORIO` ou `INVALIDO`).
+* **`metricas_modelos.csv`**: MAE, RMSE, MAPE e $R^2$ de cada modelo no treino e no teste fora da amostra (OOS).
+* **`previsoes_fora_amostra.csv`**: Comparativo mensal por grupo entre o valor real e os valores previstos por cada modelo nos períodos fora da amostra.
+* **`importancia_variaveis.csv`**: Ranking de importância preditiva das variáveis operacionais no teste OOS.
+* **`classificacao_validade.csv`**: Parecer final do modelo para cada variável (`VALIDO`, `EXPLORATORIO` ou `INVALIDO`).
 * **Gráficos (`.png`)**:
   * `real_vs_previsto_*.png`: Curvas de aderência temporal no teste cego.
   * `residuos_*.png`: Análise da distribuição dos erros.

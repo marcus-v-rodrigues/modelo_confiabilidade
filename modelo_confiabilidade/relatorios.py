@@ -34,7 +34,7 @@ RESULT_TABLE_FILES = {
 
 
 def _as_frame(value: object, columns: Sequence[str] = ()) -> pd.DataFrame:
-    """Convert optional result values to a stable, serializable frame."""
+    """Converte resultados opcionais em um DataFrame estável e serializável."""
     if isinstance(value, pd.DataFrame):
         return value.copy()
     if isinstance(value, list):
@@ -73,7 +73,7 @@ def _save_plot(path: Path) -> Path:
 
 
 def generate_plots(results: Mapping[str, Any], output_dir: Path) -> list[Path]:
-    """Generate response-level OOS plots and provenance-aware explanation plots."""
+    """Gera gráficos OOS por resposta e gráficos de explicabilidade rastreáveis."""
     plot_dir = output_dir / "graficos"
     predictions = _as_frame(results.get("previsoes"))
     if predictions.empty or "resposta" not in predictions.columns:
@@ -299,7 +299,7 @@ def compute_indicator_correlations(
     feature_columns: Sequence[str] | None = None,
     response_columns: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Calculate Pearson and Spearman correlations prioritizing MTBF and DF."""
+    """Calcula correlações de Pearson e Spearman priorizando MTBF e DF."""
     if analytic_frame.empty:
         return pd.DataFrame(columns=[
             "indicador",
@@ -403,7 +403,7 @@ def compute_indicator_correlations(
 
 
 def write_final_report(results: Mapping[str, Any], output_dir: Path) -> Path:
-    """Write a factual text report, omitting unavailable numeric evidence."""
+    """Escreve relatório factual, omitindo evidências numéricas indisponíveis."""
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "relatorio_final.txt"
     lines = ["RELATORIO FINAL DE VALIDACAO", "", f"status: {results.get('status', 'desconhecido')}"]

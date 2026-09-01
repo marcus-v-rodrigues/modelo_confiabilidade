@@ -81,9 +81,9 @@ Após a execução, o diretório configurado em `--output-dir` conterá:
 
 ### Arquivos de Modelagem e Métricas
 * **`base_analitica.csv`**: Tabela analítica consolidada com variáveis de confiabilidade ($t+1$), features operacionais defasadas ($t-1 \dots t-6$), grupo e mês.
-* **`metricas.csv`**: Métricas de performance (MAE, RMSE, MAPE, $R^2$) de cada modelo (Elastic Net, Random Forest e Baseline de Persistência) em treino e teste OOS.
-* **`previsoes.csv`**: Série temporal completa de valores reais observados vs valores previstos por modelo para cada grupo e mês.
-* **`classificacao.csv`**: Classificação conclusiva (`VALIDO`, `EXPLORATORIO`, `INVALIDO`) e justificativas para cada um dos 5 indicadores.
+* **`metricas_modelos.csv`**: Métricas de performance (MAE, RMSE, MAPE, $R^2$) de cada modelo (Elastic Net, Random Forest e Baseline de Persistência) em treino e teste OOS.
+* **`previsoes_fora_amostra.csv`**: Série temporal completa de valores reais observados vs valores previstos por modelo para cada grupo e mês nos períodos fora da amostra.
+* **`classificacao_validade.csv`**: Classificação conclusiva (`VALIDO`, `EXPLORATORIO`, `INVALIDO`) e justificativas para cada um dos 5 indicadores.
 
 ### Arquivos de Explicabilidade, Correlação e Diagnósticos
 * **`real_x_meta.csv`**: Comparativo detalhado de **Real x Meta** (desvio absoluto, desvio percentual e percentual de atingimento) para todos os indicadores disponíveis.

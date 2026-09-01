@@ -1505,7 +1505,7 @@ def test_normalize_indicator_frame_expurgates_inf_negatives_and_out_of_scale_per
     })
     result = normalize_indicator_frame(frame, "infra")
 
-    # UF (META): only index 4 (85.5) should be valid; index 0 (inf), 1 (-3.58e15), 2 (6.58e14), 3 (empty), 5 (-10) are NaN/NA
+    # UF (META): somente o índice 4 (85,5) deve ser válido; os demais viram NaN/NA.
     assert pd.isna(result.loc[0, "UF (META)"])
     assert pd.isna(result.loc[1, "UF (META)"])
     assert pd.isna(result.loc[2, "UF (META)"])
@@ -1513,17 +1513,17 @@ def test_normalize_indicator_frame_expurgates_inf_negatives_and_out_of_scale_per
     assert float(result.loc[4, "UF (META)"]) == 85.5
     assert pd.isna(result.loc[5, "UF (META)"])
 
-    # DF (REAL): index 0 (92.3), 3 (88.0), 4 (90.0), 5 (95.0) are valid; index 1 (150.0 > 100) and 2 (-5 < 0) are NaN/NA
+    # DF (REAL): os índices 0, 3, 4 e 5 são válidos; 150 (>100) e -5 (<0) viram NaN/NA.
     assert float(result.loc[0, "DF (REAL)"]) == 92.3
     assert pd.isna(result.loc[1, "DF (REAL)"])
     assert pd.isna(result.loc[2, "DF (REAL)"])
     assert float(result.loc[3, "DF (REAL)"]) == 88.0
 
-    # MTBF (REAL): index 1 (-10.0 < 0) is NaN/NA; others are valid
+    # MTBF (REAL): o índice 1 (-10 < 0) vira NaN/NA; os demais são válidos.
     assert float(result.loc[0, "MTBF (REAL)"]) == 120.5
     assert pd.isna(result.loc[1, "MTBF (REAL)"])
 
-    # Quality events were logged for deviations
+    # As ocorrências de qualidade devem registrar os desvios encontrados.
     events = result.attrs.get("data_quality_events", [])
     event_fields = [e["campo"] for e in events]
     assert "UF (META)" in event_fields
@@ -1553,18 +1553,18 @@ def test_compute_real_vs_meta_calculates_gaps_and_achievement() -> None:
 
     df_rows = result[result["indicador"] == "DF"].reset_index(drop=True)
     assert len(df_rows) == 2
-    # Row 0: 90 vs 85 -> desvio_abs = +5, atingimento = 90/85*100 = 105.88%, status ATINGIDO
+    # Linha 0: 90 contra 85 -> desvio absoluto +5, atingimento de 105,88% e status ATINGIDO.
     assert df_rows.loc[0, "desvio_absoluto"] == 5.0
     assert pytest.approx(df_rows.loc[0, "atingimento_percentual"], rel=1e-2) == 105.88
     assert df_rows.loc[0, "status_atingimento"] == "ATINGIDO"
-    # Row 1: 80 vs 85 -> desvio_abs = -5, status NAO_ATINGIDO
+    # Linha 1: 80 contra 85 -> desvio absoluto -5 e status NAO_ATINGIDO.
     assert df_rows.loc[1, "desvio_absoluto"] == -5.0
     assert df_rows.loc[1, "status_atingimento"] == "NAO_ATINGIDO"
 
     mttr_rows = result[result["indicador"] == "MTTR"].reset_index(drop=True)
-    # Row 0: MTTR 4.0 <= 5.0 -> ATINGIDO (menor é melhor)
+    # Linha 0: MTTR 4 <= 5 -> ATINGIDO, pois nesse indicador menor é melhor.
     assert mttr_rows.loc[0, "status_atingimento"] == "ATINGIDO"
-    # Row 1: MTTR 7.0 > 5.0 -> NAO_ATINGIDO
+    # Linha 1: MTTR 7 > 5 -> NAO_ATINGIDO.
     assert mttr_rows.loc[1, "status_atingimento"] == "NAO_ATINGIDO"
 
 
@@ -1584,7 +1584,7 @@ def test_compute_indicator_correlations_prioritizes_mtbf_and_df() -> None:
     assert not corr_df.empty
     assert "prioridade_analitica" in corr_df.columns
 
-    # MTBF (REAL) rows must appear before other indicators
+    # As linhas de MTBF (REAL) devem aparecer antes dos demais indicadores.
     first_indicator = corr_df.iloc[0]["indicador"]
     assert first_indicator == "MTBF (REAL)"
     assert "MTBF" in corr_df.iloc[0]["prioridade_analitica"]
