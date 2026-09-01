@@ -1,6 +1,6 @@
 # Diagnósticos Estatísticos e Critérios de Validade
 
-Este documento detalha os diagnósticos econométricos, testes estatísticos de resíduos, cálculo de importância preditiva fora da amostra e os critérios de validação do modelo implementados no módulo [`diagnosticos.py`](file:///home/marcus/projects/vale/trigger/modelo_confiabilidade/diagnosticos.py).
+Este documento detalha os diagnósticos econométricos, testes estatísticos de resíduos, cálculo de importância preditiva fora da amostra e os critérios de validação do modelo implementados no módulo [`diagnosticos.py`](../modelo_confiabilidade/diagnosticos.py).
 
 ---
 
@@ -22,7 +22,7 @@ Para cada variável-alvo modelada, são executados os seguintes diagnósticos pa
 * **Objetivo:** Detectar multicolinearidade severa entre as variáveis operacionais e seus lags.
 * **Critério de Alerta:** $\text{VIF} > \text{max\_vif}$ (padrão: $10.0$). Features com alta colinearidade são sinalizadas.
 
-### 2. Autocorrelação de Resíduos (Durbin-Watson e Ljung-Box)
+### 2. Autocorrelação de Resíduos (Durbin-Watson e autocorrelação simples)
 * **Objetivo:** Verificar se os erros de previsão são temporalmente independentes (ruído branco) ou se ainda contêm dinâmica temporal não capturada.
 * **Estatística de Durbin-Watson:** Valores próximos a $2.0$ indicam ausência de autocorrelação de 1ª ordem.
 
@@ -82,4 +82,4 @@ Ao término da validação temporal e dos diagnósticos, cada resposta de confia
 
 ## 4. Rastreabilidade e Auditoria Contínua
 
-Todos os diagnósticos, valores observados, limites de tolerância e eventuais violações são registrados detalhadamente no arquivo `diagnosticos.csv` e consolidados no sumário executivo em `relatorio_final.txt`.
+Todos os diagnósticos, valores observados, limites de tolerância e eventuais violações são registrados detalhadamente no arquivo `diagnosticos_estatisticos.csv` e consolidados no sumário executivo em `relatorio_final.txt`.

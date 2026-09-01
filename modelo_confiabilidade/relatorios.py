@@ -43,10 +43,10 @@ def _as_frame(value: object, columns: Sequence[str] = ()) -> pd.DataFrame:
 
 
 def save_results(results: Mapping[str, Any], output_dir: Path) -> None:
-    """Persist canonical result tables after a completed model run.
+    """Persiste tabelas de resultados canônicos após a conclusão da execução do modelo. 
 
-    Audit-only executions intentionally persist only their quality reports and
-    audit table, so an empty ML table cannot be mistaken for model evidence.
+    As execuções de auditoria persistem intencionalmente apenas os relatórios de qualidade e a tabela de auditoria. 
+    Portanto, uma tabela de ML vazia não deve ser confundida com evidência de um modelo.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     audit = _as_frame(results.get("audit"))

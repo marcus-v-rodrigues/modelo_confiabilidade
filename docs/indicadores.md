@@ -66,7 +66,7 @@ Todas as métricas seguem os padrões de engenharia e gestão de ativos:
 
 ## 5. Regras de Limpeza, Validação e Expurgo de Desvios
 
-Durante a carga pelo módulo [`dados.py`](file:///home/marcus/projects/vale/trigger/modelo_confiabilidade/dados.py):
+Durante a carga pelo módulo [`dados.py`](../modelo_confiabilidade/dados.py):
 1. **Remoção de Linhas de Rodapé:** Linhas contendo agregadores físicos como `Total`, linhas em branco ou textos de filtros aplicados são descartadas automaticamente.
 2. **Coerção Numérica Auditada:** Colunas com pontuação brasileira (vírgula decimal) são convertidas para ponto flutuante.
 3. **Tratamento de Dados Ausentes em `UF (META)`:** Valores em branco/vazios são tratados como dados ausentes ou erros de cálculo na origem (`NaN`), sem imputação arbitrária na base bruta.

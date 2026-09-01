@@ -13,7 +13,7 @@ graph TD
     A["1. Carregamento de Fontes<br/>(4 XLSX + 5 CSVs)"] --> B["2. Auditoria de Qualidade e Estrutura<br/>(Quality Gates)"]
     B --> C["3. Derivação Hierárquica TPLNR<br/>(EQUIPAMENTO -> GRUPO)"]
     C --> D["4. Agregação Operacional<br/>(por GRUPO e MÊS)"]
-    D --> E["5. Engenharia de Lags<br/>(t-1 a t-6)"]
+    D --> E["5. Engenharia de Lags<br/>(t e t-1 a t-6)"]
     E --> F["6. Construção da Base Analítica<br/>(Merge com Alvos t+1)"]
     F --> G["7. Validação Temporal OOS<br/>(Treino / Teste Final)"]
     G --> H["8. Treinamento de Modelos<br/>(Elastic Net & Random Forest)"]
@@ -33,7 +33,7 @@ Para cada registro operacional com `TPLNR`, os dois últimos segmentos delimitad
 * **`EQUIPAMENTO`**: Último segmento (`TPLNR.str.split("-")[-1]`).
 
 ### Validação de Consistência
-Antes do agrupamento, o módulo [`dados.py`](file:///home/marcus/projects/vale/trigger/modelo_confiabilidade/dados.py) valida:
+Antes do agrupamento, o módulo [`dados.py`](../modelo_confiabilidade/dados.py) valida:
 1. **Completude:** `TPLNR` não nulo, não vazio e com no mínimo 2 segmentos válidos.
 2. **Unicidade:** Nenhum equipamento pode estar associado a mais de um grupo no mesmo universo.
 3. **Cobertura:** Todos os equipamentos presentes nas bases de indicadores de confiabilidade devem ter correspondência na hierarquia operacional. Caso haja equipamentos sem grupo, a execução é interrompida com diagnóstico acionável.
@@ -51,8 +51,8 @@ Cada fonte operacional (AMS Contador, AMS Calendário, AMC, APR e Backlog) é tr
 
 ### Engenharia de Lags e Proteção Anti-Vazamento (*Anti-Leakage*)
 Para prever a resposta no mês $t+1$:
-1. Apenas features observadas em $t$ ou anteriores ($t-1, t-2, \dots, t-\text{max\_lag}$) são disponibilizadas para o modelo.
-2. Defasagens históricas são calculadas por grupo ao longo da série temporal usando [`create_lag_features`](file:///home/marcus/projects/vale/trigger/modelo_confiabilidade/dados.py#L720-L750).
+1. Features observadas no mês atual (`lag_0`) e nos meses anteriores (`lag_1` até `lag_max`) são disponibilizadas para prever $t+1$.
+2. Defasagens históricas são calculadas por grupo ao longo da série temporal usando [`create_lag_features`](../modelo_confiabilidade/dados.py).
 3. Respostas futuras, campos de status posteriores ou variáveis de resultado de períodos contemporâneos ao alvo são explicitamente filtrados e excluídos dos preditores.
 4. Features com alta taxa de valores nulos no treino (superior a `1 - min_feature_non_null`) são descartadas preventivamente.
 
@@ -82,7 +82,7 @@ Para cada um dos cinco indicadores de confiabilidade (`DFREAL`, `MTBFREAL`, `MTB
   $$\hat{y}_{t+1} = y_t$$
 * **Finalidade:** Serve como régua mínima obrigatória. Qualquer modelo de aprendizado de máquina supervisionado precisa superar o baseline de persistência para ser considerado válido.
 
-### 2. Elastic Net (`SGDRegressor` / `ElasticNet`)
+### 2. Elastic Net (`ElasticNet`)
 * **Abordagem:** Regressão linear regularizada combinando penalidades L1 (Lasso) e L2 (Ridge).
 * **Vantagens:** Seleciona subconjuntos esparsos de variáveis operacionais relevantes, lida com colinearidade residual e produz coeficientes lineares interpretáveis.
 
