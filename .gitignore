@@ -19,6 +19,9 @@ dist/
 *.egg-info/
 .worktrees/
 
+# Databases
+bases/
+
 # Execution outputs and logs
 resultados/
 resultados-*/
