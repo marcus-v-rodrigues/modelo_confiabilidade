@@ -6,7 +6,7 @@ Calcula métricas de regressão para valores reais e previstos: MAE, RMSE, MAPE,
 
 ## `build_model_pipeline(model_name: str, random_state: int, device: str = "cpu") -> sklearn.pipeline.Pipeline`
 
-Cria o pipeline estimador. `model_name` aceita `elastic_net`, `random_forest` e, quando disponível, `xgboost`; `random_state` controla reprodutibilidade; `device` aceita `cpu` ou `cuda` (CUDA usa XGBoost). Retorna um `Pipeline` ainda não treinado.
+Cria o pipeline estimador. `model_name` aceita `elastic_net`, `random_forest` e `xgboost`; os três são avaliados em paralelo. `random_state` controla reprodutibilidade. Com `device="cuda"`, usa os estimadores e pré-processadores RAPIDS/cuML para os modelos CPU/GPU e XGBoost com CUDA; o Random Forest não é substituído. Retorna um `Pipeline` ainda não treinado.
 
 ## `run_temporal_validation(data: DataFrame, response: str, config: Config, predictor_columns: Sequence[str] | None = None) -> dict[str, Any]`
 

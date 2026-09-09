@@ -1,0 +1,7 @@
+# Dependências da execução padrão
+-r requirements.txt
+
+# RAPIDS cuML fornece as versões CUDA de ElasticNet, RandomForestRegressor,
+# SimpleImputer e StandardScaler usadas por --device cuda.
+--extra-index-url https://pypi.nvidia.com
+cuml-cu12

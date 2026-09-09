@@ -16,7 +16,7 @@ graph TD
     D --> E["5. Engenharia de Lags<br/>(t e t-1 a t-6)"]
     E --> F["6. Construção da Base Analítica<br/>(Merge com Alvos t+1)"]
     F --> G["7. Validação Temporal OOS<br/>(Treino / Teste Final)"]
-    G --> H["8. Treinamento de Modelos<br/>(Elastic Net & Random Forest)"]
+    G --> H["8. Treinamento de Modelos<br/>(Elastic Net, Random Forest & XGBoost)"]
     H --> I["9. Diagnósticos Estatísticos<br/>(VIF, Resíduos, Importância OOS)"]
     I --> J["10. Relatórios e Gráficos<br/>(CSVs, TXT, PNGs)"]
 ```
@@ -89,6 +89,15 @@ Para cada um dos cinco indicadores de confiabilidade (`DFREAL`, `MTBFREAL`, `MTB
 ### 3. Random Forest Regressor
 * **Abordagem:** Conjunto de árvores de decisão não lineares com amostragem aleatória de features.
 * **Vantagens:** Captura interações não lineares complexas entre indicadores de manutenção e operação sem impor pressupostos de linearidade.
+
+### 4. XGBoost (`XGBRegressor`)
+* **Abordagem:** Gradient boosting de árvores de decisão, avaliado como modelo independente do Random Forest.
+* **Execução:** Usa `cpu` por padrão ou CUDA quando `--device cuda` é informado; o Random Forest continua sendo treinado separadamente nos dois casos.
+* **Vantagens:** Oferece outro ensemble de árvores para comparação, com suporte à aceleração por GPU.
+
+Quando `--device cuda` é usado, os estimadores e transformadores numéricos dos três modelos
+são fornecidos pelo RAPIDS/cuML (e pelo XGBoost no caso do boosting). As etapas de leitura,
+organização temporal, diagnósticos estatísticos e relatórios continuam em CPU.
 
 ---
 

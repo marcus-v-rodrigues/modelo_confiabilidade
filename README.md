@@ -119,14 +119,19 @@ python -m modelo_confiabilidade \
 
 ### Execução usando a RTX/NVIDIA (CUDA)
 
-O Elastic Net continua na CPU; o modelo de árvores usa XGBoost com CUDA:
+Com `--device cuda`, o pré-processamento numérico e o treinamento dos três modelos
+(Elastic Net, Random Forest e XGBoost) usam a GPU.
+
+Instale as dependências GPU compatíveis com o driver CUDA antes de executar:
 
 ```bash
+pip install -r requirements-gpu.txt
 python -m modelo_confiabilidade --device cuda
 ```
 
-Requer driver NVIDIA funcional e `xgboost>=2.0` instalado. O modo padrão (`--device cpu`)
-continua usando Random Forest do scikit-learn para manter comparabilidade com execuções anteriores.
+O modo padrão (`--device cpu`) continua usando as implementações CPU. A leitura dos arquivos,
+auditoria, organização temporal, diagnósticos estatísticos e geração dos relatórios permanecem
+em CPU, pois usam pandas/statsmodels/matplotlib.
 
 ### Visualizar Todas as Opções e Ajuda da CLI
 
@@ -145,7 +150,7 @@ python -m modelo_confiabilidade --help
 | **`--test-months`**              |      `3`      | Meses finais reservados para teste fora da amostra (OOS).                                                                    |
 | **`--max-lag`**                  |      `6`      | Defasagem histórica máxima ($t-1$ a $t-6$) das features operacionais.                                                  |
 | **`--random-state`**             |      `42`      | Semente para garantir reprodutibilidade matemática dos modelos.                                                             |
-| **`--device`**                   |    `cpu`       | `cpu` usa Random Forest; `cuda` usa o modelo de árvores do XGBoost na GPU NVIDIA.                                           |
+| **`--device`**                   |    `cpu`       | Dispositivo dos modelos e do pré-processamento numérico (`cpu` ou `cuda`); CUDA usa RAPIDS/cuML e XGBoost.                 |
 | **`--group-map-file`**           |     `None`     | *Opcional:* Caminho para CSV de mapeamento explícito. Se omitido, o agrupamento é derivado automaticamente do `TPLNR`. |
 | **`--min-train-rows`**           |      `30`      | Quantidade mínima de linhas de treino necessárias.                                                                         |
 | **`--min-test-rows`**            |      `10`      | Quantidade mínima de observações no teste OOS.                                                                            |
@@ -164,7 +169,7 @@ O pipeline possui travas de segurança rigorosas (*Quality Gates*) para garantir
 1. **Modo Completo (`status = "completed"`):**
 
    * Os dados passam em todas as verificações estruturais e de hierarquia.
-   * O pipeline executa a engenharia de features, treina os modelos (**Elastic Net** e **Random Forest**), compara contra o **Baseline de Persistência**, executa diagnósticos estatísticos (VIF, autocorrelação e resíduos) e gera os gráficos e relatórios.
+   * O pipeline executa a engenharia de features, treina os modelos (**Elastic Net**, **Random Forest** e **XGBoost**), compara contra o **Baseline de Persistência**, executa diagnósticos estatísticos (VIF, autocorrelação e resíduos) e gera os gráficos e relatórios.
 2. **Modo Somente Auditoria (`status = "audit_only"`):**
 
    * Se for detectado erro estrutural grave (ex.: porcentagens > 100% em bases brutas, corrupção de abas, inconsistência de chaves), o pipeline **não inventa resultados de ML**.
@@ -204,25 +209,26 @@ Aqui os registros brutos são "traduzidos" para o nível mensal:
 
 ### 4. Modelagem (`modelagem.py`) — a parte pesada ⏱️
 
-Para cada indicador-alvo (DF, MTBF, MTBS, MTTR, NIC), treina **3 concorrentes**:
+Para cada indicador-alvo (DF, MTBF, MTBS, MTTR, NIC), treina os modelos e os compara com o baseline:
 
 | Modelo | O que é | Pipeline sklearn |
 | :--- | :--- | :--- |
 | `baseline_t1` | "prever que o mês que vem = mês atual" | O mínimo que qualquer modelo precisa vencer |
 | `elastic_net` | Regressão linear com regularização L1+L2 | `SimpleImputer(median) → StandardScaler → ElasticNet` |
 | `random_forest` | Floresta de árvores (captura não-linearidades) | `SimpleImputer(median) → RandomForestRegressor` |
+| `xgboost` | Gradient boosting de árvores | `SimpleImputer(median) → XGBRegressor` |
 
 Detalhes importantes:
 
 * **Alvo deslocado**: o target é `shift(-1)` — as features de um mês preveem o indicador do **mês seguinte** (evita vazamento de futuro);
 * **Validação temporal (walk-forward)**: um `TimeSeriesSplit` customizado (`_PeriodTimeSeriesSplit`) garante que o treino é sempre **antes** do teste, em janelas cronológicas — nada de K-fold comum bagunçando o tempo;
-* **`GridSearchCV`**: busca de hiperparâmetros (α e `l1_ratio` do ElasticNet; profundidade da floresta) usando MAE como critério;
+* **`GridSearchCV`**: busca de hiperparâmetros (α e `l1_ratio` do ElasticNet; profundidade das árvores) usando MAE como critério;
 * **Pipeline sklearn**: imputação e escala ficam *dentro* do pipeline e são reajustados a cada fold — evita vazamento de dados entre treino e teste;
 * **OOF (out-of-fold)**: cada fold gera previsões em dados nunca vistos; depois há um **teste final** no período mais recente.
 
 ### 5. Diagnóstico e explicação (`diagnosticos.py`)
 
-* **Explicabilidade**: coeficientes do ElasticNet (quais lags puxam a previsão para cima/baixo) e `feature_importances_` da floresta;
+* **Explicabilidade**: coeficientes do ElasticNet (quais lags puxam a previsão para cima/baixo) e `feature_importances_` dos modelos de árvores;
 * **Diagnósticos estatísticos** por resposta (resíduos, correlações Pearson/Spearman, VIF);
 * **`classify_validity`**: um "juiz" que dá parecer a cada modelo com regras explícitas — supera o baseline? MAPE dentro do limite? amostra suficiente? — resultando em `VALIDO`, `EXPLORATORIO` ou `INVALIDO`.
 
@@ -236,7 +242,7 @@ Grava tudo em `resultados/`: real × meta, correlações, dispersão previsto ×
 
 ```text
 bases/*.csv → auditoria → mapeamento GRUPO → agregação mensal + lags
-     → walk-forward CV (ElasticNet vs Random Forest vs baseline t+1)
+     → walk-forward CV (ElasticNet vs Random Forest vs XGBoost vs baseline t+1)
      → métricas (MAE/RMSE/MAPE/R²) + explicações + juiz de validade
      → gráficos + relatório final
 ```
@@ -286,7 +292,7 @@ modelo_confiabilidade/
 ├── configuracao.py       # Configurações, dataclass Config e parse_args
 ├── dados.py              # Leitura de XLSX/CSVs, hierarquia TPLNR e lags
 ├── auditoria.py          # Quality gates e relatórios de integridade
-├── modelagem.py          # Elastic Net, Random Forest, Baseline e validação OOS
+├── modelagem.py          # Elastic Net, Random Forest, XGBoost, Baseline e validação OOS
 ├── diagnosticos.py       # Diagnósticos estatísticos, VIF e classificação
 └── relatorios.py         # Exportação de CSVs, gráficos PNG e relatório TXT
 ```

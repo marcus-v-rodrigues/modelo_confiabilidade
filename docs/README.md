@@ -22,7 +22,7 @@ modelo_confiabilidade/
 ├── configuracao.py       # Configuração e argumentos
 ├── dados.py              # Leitura, normalização, TPLNR, lags e features
 ├── auditoria.py          # Quality gates e auditoria
-├── modelagem.py          # Elastic Net, Random Forest, baseline e validação temporal
+├── modelagem.py          # Elastic Net, Random Forest, XGBoost, baseline e validação temporal
 ├── diagnosticos.py       # VIF, resíduos, importância e classificação
 └── relatorios.py         # CSVs, gráficos e relatório TXT
 ```

@@ -11,7 +11,7 @@ As principais limitações identificadas foram:
 - ausência de validação fora da amostra;
 - dependência de aliases e mapeamentos manuais que não representavam diretamente as exportações brutas do SAP.
 
-O pacote atual substitui essa abordagem por agregação mensal, features temporais, previsão `t → t+1`, validação cronológica, Elastic Net, Random Forest, baseline de persistência e quality gates.
+O pacote atual substitui essa abordagem por agregação mensal, features temporais, previsão `t → t+1`, validação cronológica, Elastic Net, Random Forest, XGBoost, baseline de persistência e quality gates.
 
 ## Evolução das fontes e nomes
 

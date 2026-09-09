@@ -25,7 +25,7 @@ Consulte todas as opções com:
 python -m modelo_confiabilidade --help
 ```
 
-`--device cuda` troca o modelo de árvores por XGBoost com CUDA e requer `xgboost>=2.0`; o Elastic Net continua na CPU. O padrão (`cpu`) usa Random Forest do scikit-learn.
+`--device cuda` mantém Elastic Net e Random Forest e executa o XGBoost adicionalmente com CUDA. O treinamento e o pré-processamento numérico usam RAPIDS/cuML e XGBoost na GPU. Instale `requirements-gpu.txt` e tenha um driver NVIDIA compatível. A leitura, auditoria, diagnósticos estatísticos e relatórios continuam na CPU. O padrão (`cpu`) usa as implementações CPU.
 
 ## Parâmetros principais
 

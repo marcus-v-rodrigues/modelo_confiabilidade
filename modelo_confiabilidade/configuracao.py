@@ -125,7 +125,7 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         "--device",
         choices=("cpu", "cuda"),
         default="cpu",
-        help="Dispositivo do modelo de arvores: cpu (Random Forest) ou cuda (GPU, via XGBoost) (default: cpu).",
+        help="Dispositivo dos modelos e do pre-processamento numerico: cpu ou cuda (GPU NVIDIA; requer RAPIDS/cuML) (default: cpu).",
     )
     parser.add_argument(
         "--group-map-file",

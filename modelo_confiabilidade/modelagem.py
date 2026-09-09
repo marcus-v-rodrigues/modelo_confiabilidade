@@ -37,6 +37,34 @@ CANONICAL_RELIABILITY_RESPONSES = {
     "NIC (VMINA)",
 }
 
+# Todos os modelos supervisionados são avaliados em paralelo; o baseline é
+# acrescentado separadamente como referência.
+MODEL_NAMES = ("elastic_net", "random_forest", "xgboost")
+
+
+def _load_cuda_estimators() -> tuple[type, type, type, type]:
+    """Load RAPIDS estimators and preprocessors used by CUDA mode."""
+    try:
+        from cuml.ensemble import RandomForestRegressor as CudaRandomForestRegressor
+        from cuml.linear_model import ElasticNet as CudaElasticNet
+        try:
+            from cuml.preprocessing import SimpleImputer as CudaSimpleImputer
+        except ImportError:
+            from cuml.experimental.preprocessing import SimpleImputer as CudaSimpleImputer
+        from cuml.preprocessing import StandardScaler as CudaStandardScaler
+    except ImportError as exc:
+        raise RuntimeError(
+            "O modo CUDA requer RAPIDS cuML para executar Elastic Net e "
+            "Random Forest na GPU. Instale uma versão compatível com seu CUDA "
+            "(por exemplo, 'cuml-cu12' pelo índice da NVIDIA)."
+        ) from exc
+    return (
+        CudaRandomForestRegressor,
+        CudaElasticNet,
+        CudaSimpleImputer,
+        CudaStandardScaler,
+    )
+
 
 def _is_reliability_response_feature(
     column: str,
@@ -173,46 +201,72 @@ def build_model_pipeline(
 ) -> Pipeline:
     """Build a leakage-safe preprocessing and estimator pipeline.
 
-    ``device='cuda'`` uses XGBoost's histogram implementation for the tree
-    model.  It is intentionally opt-in: the default remains sklearn's Random
-    Forest so existing results stay comparable.
+    ``device='cuda'`` uses RAPIDS/cuML for the numerical preprocessing and for
+    Elastic Net and Random Forest; XGBoost uses its CUDA implementation. The
+    models remain separate: XGBoost does not replace Random Forest.
     """
     normalized = model_name.lower().replace("-", "_").replace(" ", "_")
     if device not in {"cpu", "cuda"}:
         raise ValueError(f"Dispositivo nao suportado: {device}")
     # keep_empty_features=True: colunas sem nenhum valor observado em uma janela de treino
     # sao retidas (preenchidas com zero) em vez de descartadas silenciosamente pelo imputer.
+    if device == "cuda":
+        (
+            CudaRandomForestRegressor,
+            CudaElasticNet,
+            CudaSimpleImputer,
+            CudaStandardScaler,
+        ) = _load_cuda_estimators()
+        # O cuML não oferece esse argumento em todas as versões. Quando ele não
+        # existe, o comportamento padrão ainda mantém o formato por pipeline/fold.
+        try:
+            imputer = CudaSimpleImputer(strategy="median", keep_empty_features=True)
+        except TypeError:
+            imputer = CudaSimpleImputer(strategy="median")
+    else:
+        imputer = SimpleImputer(strategy="median", keep_empty_features=True)
+
     if normalized in {"elastic_net", "elasticnet"}:
+        if device == "cuda":
+            scaler = CudaStandardScaler()
+            estimator = CudaElasticNet(max_iter=10000)
+        else:
+            scaler = StandardScaler()
+            estimator = ElasticNet(random_state=random_state, max_iter=10000)
         return Pipeline([
-            ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-            ("scaler", StandardScaler()),
-            ("model", ElasticNet(random_state=random_state, max_iter=10000)),
+            ("imputer", imputer),
+            ("scaler", scaler),
+            ("model", estimator),
         ])
     if normalized in {"random_forest", "randomforest"}:
         if device == "cuda":
-            try:
-                from xgboost import XGBRegressor
-            except ImportError as exc:
-                raise RuntimeError(
-                    "Modo CUDA requer xgboost instalado (pip install 'xgboost>=2.0')."
-                ) from exc
-            # XGBoost e uma floresta de arvores GPU-compatível, mas nao e o
-            # RandomForest sklearn; por isso o modo CUDA e explicitamente opt-in.
-            estimator = XGBRegressor(
+            estimator = CudaRandomForestRegressor(
                 random_state=random_state,
-                tree_method="hist",
-                device="cuda",
-                n_jobs=0,
-                objective="reg:squarederror",
-                verbosity=0,
+                n_streams=1,
             )
         else:
             estimator = RandomForestRegressor(random_state=random_state, n_jobs=-1)
-        return Pipeline([
-            ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-            ("model", estimator),
-        ])
-    raise ValueError(f"Modelo nao suportado: {model_name}")
+    elif normalized in {"xgboost", "xgb"}:
+        try:
+            from xgboost import XGBRegressor
+        except ImportError as exc:
+            raise RuntimeError(
+                "O modelo xgboost requer xgboost instalado (pip install 'xgboost>=2.0')."
+            ) from exc
+        estimator = XGBRegressor(
+            random_state=random_state,
+            tree_method="hist",
+            device=device,
+            n_jobs=0,
+            objective="reg:squarederror",
+            verbosity=0,
+        )
+    else:
+        raise ValueError(f"Modelo nao suportado: {model_name}")
+    return Pipeline([
+        ("imputer", imputer),
+        ("model", estimator),
+    ])
 
 
 class _PeriodTimeSeriesSplit:
@@ -297,12 +351,10 @@ def _fit_search(
         return pipeline, {}
     if model_name == "elastic_net":
         grid = {"model__alpha": [0.1, 1.0], "model__l1_ratio": [0.2, 0.8]}
-    else:
-        grid = (
-            {"model__n_estimators": [50], "model__max_depth": [None, 5]}
-            if device == "cpu"
-            else {"model__n_estimators": [100], "model__max_depth": [0, 5]}
-        )
+    elif model_name == "random_forest":
+        grid = {"model__n_estimators": [50], "model__max_depth": [None, 5]}
+    else:  # xgboost
+        grid = {"model__n_estimators": [100], "model__max_depth": [0, 5]}
     splitter = _PeriodTimeSeriesSplit(n_splits, periods.tolist())
     folds = list(splitter.split(X))
     if len(folds) < 2:
@@ -433,7 +485,7 @@ def run_temporal_validation(
                 "status": "insuficiente",
                 **empty_metric_values,
             }
-            for model_name in ("elastic_net", "random_forest", "baseline_t1")
+            for model_name in (*MODEL_NAMES, "baseline_t1")
         ]
         return (
             empty_predictions,
@@ -466,7 +518,7 @@ def run_temporal_validation(
     final_estimators: dict[str, Pipeline] = {}
     metric_stability: dict[str, dict[str, dict[str, Any]]] = {}
     metric_records: list[dict[str, Any]] = []
-    for model_name in ("elastic_net", "random_forest"):
+    for model_name in MODEL_NAMES:
         oof_predictions: list[pd.DataFrame] = []
         # A validação acumula métricas por janela para permitir auditoria temporal.
         fold_metrics: list[dict[str, float]] = []
