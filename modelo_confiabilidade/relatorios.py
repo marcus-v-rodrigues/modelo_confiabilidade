@@ -30,6 +30,7 @@ RESULT_TABLE_FILES = {
     "classificacao": "classificacao_validade.csv",
     "real_x_meta": "real_x_meta.csv",
     "correlacoes": "correlacoes_indicadores.csv",
+    "modelos_exportados": "modelos_exportados.csv",
 }
 
 
@@ -201,7 +202,7 @@ REAL_VS_META_INDICATORS = {
 
 
 def compute_real_vs_meta(frame: pd.DataFrame) -> pd.DataFrame:
-    """Calculate Real vs Meta gaps, percent deviations and target achievement."""
+    """Calcula diferenças entre Real e Meta, desvios percentuais e atingimento de metas."""
     if frame.empty:
         return pd.DataFrame(columns=[
             "indicador",

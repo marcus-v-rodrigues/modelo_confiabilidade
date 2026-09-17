@@ -10,6 +10,7 @@ Esta pasta descreve os módulos, classes e funções disponíveis em `modelo_con
 - [`modelagem`](modelagem.md): modelos, métricas e validação temporal.
 - [`diagnosticos`](diagnosticos.md): diagnósticos estatísticos e validade.
 - [`relatorios`](relatorios.md): CSVs, gráficos e relatório final.
+- [`deploy`](deploy.md): exportação, carregamento e utilização dos modelos.
 - [`__main__`](main.md): entrada programática da CLI.
 
 ## Uso mínimo

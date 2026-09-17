@@ -14,7 +14,10 @@ INDICATOR_FILES: dict[str, str] = {
     "perfuracao": "INDICADORES MENSAIS POR UNIVERSO perfuracao.xlsx",
     "infra": "INDICADORES MENSAIS POR UNIVERSO infra.xlsx",
 }
-"""The four indicator workbooks, keyed by their universe."""
+"""As quatro planilhas de indicadores, indexadas por universo."""
+
+EXPORTABLE_MODEL_NAMES = ("elastic_net", "random_forest", "xgboost", "recommended")
+"""Modelos que podem ser selecionados para exportação; ``recommended`` escolhe o melhor OOS."""
 
 OPERATIONAL_FILES: dict[str, str] = {
     "AMS_Contador": "AMS_Contador.csv",
@@ -23,7 +26,7 @@ OPERATIONAL_FILES: dict[str, str] = {
     "APR_ITABIRA": "APR_ITABIRA.csv",
     "Backlog_mina_itabira": "Backlog_mina_itabira.csv",
 }
-"""The five operational CSV exports, keyed by source name."""
+"""As cinco exportações operacionais em CSV, indexadas pelo nome da fonte."""
 
 _INDICATOR_NUMERIC_COLUMNS = {
     "DFREAL",
@@ -36,7 +39,7 @@ _ESSENTIAL_INDICATOR_COLUMNS = {"ANOMES", "EQUIPAMENTO", *_INDICATOR_NUMERIC_COL
 
 
 class DataValidationError(Exception):
-    """Raised when a required source cannot be loaded or is unavailable."""
+    """Exceção para uma fonte obrigatória que não pode ser carregada ou está indisponível."""
 
     source: str = ""
     path: Path | str = ""
@@ -45,7 +48,7 @@ class DataValidationError(Exception):
 
 @dataclass(frozen=True)
 class Config:
-    """Validated runtime configuration for the validation pipeline."""
+    """Configuração de execução validada para o pipeline de validação."""
 
     input_dir: Path = Path("./bases")
     output_dir: Path = Path("./resultados")
@@ -53,6 +56,7 @@ class Config:
     max_lag: int = 6
     random_state: int = 42
     device: str = "cpu"
+    export_models: tuple[str, ...] = ("elastic_net", "random_forest", "xgboost")
     group_map_file: Path | None = None
     min_train_rows: int = 30
     min_test_rows: int = 10
@@ -65,7 +69,7 @@ class Config:
 
 
 def _positive_int(value: str) -> int:
-    """Parse a strictly positive integer for an argparse option."""
+    """Converte uma opção do argparse em um inteiro estritamente positivo."""
     try:
         parsed = int(value)
     except ValueError as exc:
@@ -76,7 +80,7 @@ def _positive_int(value: str) -> int:
 
 
 def _non_negative_float(value: str) -> float:
-    """Parse a non-negative floating-point threshold."""
+    """Converte um limite de ponto flutuante não negativo."""
     try:
         parsed = float(value)
     except ValueError as exc:
@@ -87,7 +91,7 @@ def _non_negative_float(value: str) -> float:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> Config:
-    """Parse command-line arguments and return an immutable configuration."""
+    """Interpreta os argumentos da linha de comando e retorna uma configuração imutável."""
     parser = argparse.ArgumentParser(
         description="Pipeline de modelagem e validacao preditiva dos indicadores de confiabilidade."
     )
@@ -126,6 +130,14 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         choices=("cpu", "cuda"),
         default="cpu",
         help="Dispositivo dos modelos e do pre-processamento numerico: cpu ou cuda (GPU NVIDIA; requer RAPIDS/cuML) (default: cpu).",
+    )
+    parser.add_argument(
+        "--export-models",
+        nargs="+",
+        choices=EXPORTABLE_MODEL_NAMES,
+        default=("elastic_net", "random_forest", "xgboost"),
+        metavar="MODELO",
+        help="Modelos a exportar: elastic_net, random_forest, xgboost ou recommended (default: todos).",
     )
     parser.add_argument(
         "--group-map-file",
@@ -182,11 +194,13 @@ def parse_args(argv: Sequence[str] | None = None) -> Config:
         help="Fator de Inflacao da Variancia (VIF) maximo tolerado antes de sinalizar multicolinearidade (default: 10.0).",
     )
     args = parser.parse_args(argv)
-    return Config(**vars(args))
+    values = vars(args)
+    values["export_models"] = tuple(values["export_models"])
+    return Config(**values)
 
 
 def configure_logging(output_dir: Path) -> logging.Logger:
-    """Configure console and file logging for one CLI execution."""
+    """Configura os registros no console e em arquivo para uma execução da CLI."""
     output_dir.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger("validar_modelo")
     logger.setLevel(logging.INFO)
@@ -207,7 +221,7 @@ _configure_logging = configure_logging
 
 
 def __getattr__(name: str) -> Any:
-    """Provide lazy access for backward-compatible loader imports without circular dependencies."""
+    """Fornece acesso tardio a carregadores legados sem criar dependências circulares."""
     if name in ("load_indicator_files", "load_operational_files"):
         from .dados import load_indicator_files, load_operational_files
 
@@ -220,6 +234,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "Config",
     "DataValidationError",
+    "EXPORTABLE_MODEL_NAMES",
     "INDICATOR_FILES",
     "OPERATIONAL_FILES",
     "_ESSENTIAL_INDICATOR_COLUMNS",

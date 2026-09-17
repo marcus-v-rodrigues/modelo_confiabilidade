@@ -43,7 +43,7 @@ MODEL_NAMES = ("elastic_net", "random_forest", "xgboost")
 
 
 def _load_cuda_estimators() -> tuple[type, type, type, type]:
-    """Load RAPIDS estimators and preprocessors used by CUDA mode."""
+    """Carrega estimadores e pré-processadores RAPIDS usados no modo CUDA."""
     try:
         from cuml.ensemble import RandomForestRegressor as CudaRandomForestRegressor
         from cuml.linear_model import ElasticNet as CudaElasticNet
@@ -125,7 +125,7 @@ def _operational_coverage_mask(
     feature_columns: Sequence[str],
     min_feature_non_null: float,
 ) -> pd.Series:
-    """Keep rows with the configured fraction of observed operational predictors."""
+    """Mantém linhas com a fração configurada de preditores operacionais observados."""
     if not feature_columns:
         return pd.Series(False, index=frame.index)
     non_null_fraction = frame.loc[:, list(feature_columns)].notna().mean(axis=1)
@@ -172,7 +172,7 @@ def calculate_regression_metrics(
         else float("nan")
     )
     # Correlacoes com variancia zero nao sao definidas; o calculo e evitado para nao
-    # disparar ConstantInputWarning/invalid value in divide.
+    # disparar ConstantInputWarning ou avisos de valor inválido na divisão.
     if _variation_defined(actual_values, predicted_values):
         pearson = float(pd.Series(actual_values).corr(pd.Series(predicted_values)))
         spearman = float(
@@ -199,17 +199,17 @@ def calculate_regression_metrics(
 def build_model_pipeline(
     model_name: str, random_state: int, device: str = "cpu"
 ) -> Pipeline:
-    """Build a leakage-safe preprocessing and estimator pipeline.
+    """Constrói um pipeline de pré-processamento e estimador protegido contra vazamento.
 
-    ``device='cuda'`` uses RAPIDS/cuML for the numerical preprocessing and for
-    Elastic Net and Random Forest; XGBoost uses its CUDA implementation. The
-    models remain separate: XGBoost does not replace Random Forest.
+    ``device='cuda'`` usa RAPIDS/cuML no pré-processamento numérico e nos
+    modelos Elastic Net e Random Forest; XGBoost usa sua implementação CUDA.
+    Os modelos permanecem separados: XGBoost não substitui Random Forest.
     """
     normalized = model_name.lower().replace("-", "_").replace(" ", "_")
     if device not in {"cpu", "cuda"}:
         raise ValueError(f"Dispositivo nao suportado: {device}")
     # keep_empty_features=True: colunas sem nenhum valor observado em uma janela de treino
-    # sao retidas (preenchidas com zero) em vez de descartadas silenciosamente pelo imputer.
+    # são mantidas (preenchidas com zero) em vez de descartadas silenciosamente pelo imputador.
     if device == "cuda":
         (
             CudaRandomForestRegressor,
@@ -270,11 +270,11 @@ def build_model_pipeline(
 
 
 class _PeriodTimeSeriesSplit:
-    """Split complete periods, never individual rows, into chronological folds.
+    """Divide períodos completos, nunca linhas individuais, em blocos cronológicos.
 
-    Folds whose training window has fewer than ``min_train_periods`` periods are
-    skipped: fitting on one month would leave high-lag columns entirely NaN and
-    produce degenerate fold metrics.
+    Blocos cuja janela de treino possui menos que ``min_train_periods`` períodos
+    são ignorados: treinar com um único mês deixaria colunas de lag alto
+    totalmente NaN e produziria métricas degeneradas.
     """
 
     def __init__(
@@ -731,7 +731,7 @@ def run_temporal_validation(
 
 
 def _as_frame(value: object, columns: Sequence[str] = ()) -> pd.DataFrame:
-    """Convert optional result values to a stable, serializable frame."""
+    """Converte valores opcionais de resultado em um DataFrame estável e serializável."""
     if isinstance(value, pd.DataFrame):
         return value.copy()
     if isinstance(value, list):
@@ -740,7 +740,7 @@ def _as_frame(value: object, columns: Sequence[str] = ()) -> pd.DataFrame:
 
 
 def _variation_defined(actual: np.ndarray, predicted: np.ndarray) -> bool:
-    """True when Pearson/Spearman are defined (two points and non-zero variation)."""
+    """Retorna verdadeiro quando Pearson/Spearman estão definidos (dois pontos e variação não nula)."""
     return bool(
         len(actual) > 1
         and len(predicted) > 1
@@ -750,7 +750,7 @@ def _variation_defined(actual: np.ndarray, predicted: np.ndarray) -> bool:
 
 
 def _periods_as_text(periods: object) -> str:
-    """Serialize validation periods so coverage decisions are auditable in CSV."""
+    """Serializa períodos de validação para que decisões de cobertura sejam auditáveis no CSV."""
     if periods is None:
         return ""
     if isinstance(periods, (str, bytes)):
@@ -764,7 +764,7 @@ def _periods_as_text(periods: object) -> str:
 def _temporal_validation_audit(
     response: str, metadata: Mapping[str, Any]
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Make per-response coverage and predictor exclusions serializable."""
+    """Torna serializáveis a cobertura por resposta e as exclusões de preditores."""
     coverage = metadata.get("coverage_audit", {})
     coverage_row = pd.DataFrame([{
         "resposta": response,

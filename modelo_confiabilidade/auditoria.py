@@ -1,4 +1,4 @@
-"""Auditoria estrutural e quality gate das fontes."""
+"""Auditoria estrutural e barreira de qualidade das fontes."""
 
 from __future__ import annotations
 

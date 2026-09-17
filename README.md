@@ -139,6 +139,39 @@ em CPU, pois usam pandas/statsmodels/matplotlib.
 python -m modelo_confiabilidade --help
 ```
 
+### Escolher quais modelos exportar
+
+Por padrão, os três modelos supervisionados são exportados. É possível salvar apenas um:
+
+```bash
+python -m modelo_confiabilidade \
+  --export-models random_forest
+```
+
+Exemplo de arquivos gerados:
+
+```text
+resultados/modelos/DF_REAL__random_forest.joblib
+resultados/modelos/MTBF_REAL__random_forest.joblib
+...
+```
+
+Para salvar vários modelos:
+
+```bash
+python -m modelo_confiabilidade \
+  --export-models elastic_net xgboost
+```
+
+Para salvar somente o melhor modelo OOS:
+
+```bash
+python -m modelo_confiabilidade \
+  --export-models recommended
+```
+
+Nesse caso, o melhor modelo é escolhido pelo menor MAE no teste fora da amostra. Os três modelos continuam sendo treinados para comparação; a opção controla somente quais serão exportados.
+
 ---
 
 ## 6. Parâmetros Principais da Linha de Comando
@@ -151,6 +184,7 @@ python -m modelo_confiabilidade --help
 | **`--max-lag`**                  |      `6`      | Defasagem histórica máxima ($t-1$ a $t-6$) das features operacionais.                                                  |
 | **`--random-state`**             |      `42`      | Semente para garantir reprodutibilidade matemática dos modelos.                                                             |
 | **`--device`**                   |    `cpu`       | Dispositivo dos modelos e do pré-processamento numérico (`cpu` ou `cuda`); CUDA usa RAPIDS/cuML e XGBoost.                 |
+| **`--export-models`**             | todos          | Modelos a salvar (`elastic_net`, `random_forest`, `xgboost`) ou `recommended` para salvar somente o melhor no teste OOS. |
 | **`--group-map-file`**           |     `None`     | *Opcional:* Caminho para CSV de mapeamento explícito. Se omitido, o agrupamento é derivado automaticamente do `TPLNR`. |
 | **`--min-train-rows`**           |      `30`      | Quantidade mínima de linhas de treino necessárias.                                                                         |
 | **`--min-test-rows`**            |      `10`      | Quantidade mínima de observações no teste OOS.                                                                            |
@@ -266,6 +300,10 @@ Quando a execução finaliza, o diretório de saída contém:
   * `real_vs_previsto_*.png`: Curvas de aderência temporal no teste cego.
   * `residuos_*.png`: Análise da distribuição dos erros.
   * `importancia_*.png`: Gráficos de barras com as variáveis mais influentes.
+* **`modelos/`**: pipelines treinados em `.joblib` e `manifest.json`, com o contrato de features necessário para novas previsões.
+* **`modelos_exportados.csv`**: inventário dos modelos exportados e indicação de permissão de uso.
+
+Os modelos classificados como `INVALIDO` ou `EXPLORATORIO` ficam bloqueados pela API de utilização. Para avaliação controlada, a liberação deve ser explícita com `allow_invalid=True`. Consulte [`docs/api/deploy.md`](docs/api/deploy.md) para carregar o artefato e prever o mês `t+1`.
 
 ---
 
@@ -294,6 +332,7 @@ modelo_confiabilidade/
 ├── auditoria.py          # Quality gates e relatórios de integridade
 ├── modelagem.py          # Elastic Net, Random Forest, XGBoost, Baseline e validação OOS
 ├── diagnosticos.py       # Diagnósticos estatísticos, VIF e classificação
+├── deploy.py             # Exportação, carregamento e utilização dos modelos
 └── relatorios.py         # Exportação de CSVs, gráficos PNG e relatório TXT
 ```
 

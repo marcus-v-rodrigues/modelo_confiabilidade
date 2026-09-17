@@ -1,4 +1,4 @@
-"""Local pytest bootstrap so the literal brief command is self-contained."""
+"""Inicialização local do pytest para manter o comando documentado autocontido."""
 
 import sys
 from pathlib import Path

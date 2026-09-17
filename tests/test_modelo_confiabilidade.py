@@ -1,4 +1,4 @@
-"""Contract tests for the Task 1 interfaces."""
+"""Testes de contrato para as interfaces da Tarefa 1."""
 
 from pathlib import Path
 import logging
@@ -53,7 +53,7 @@ from modelo_confiabilidade.relatorios import (
 
 @pytest.fixture
 def small_source_dir(tmp_path: Path) -> Path:
-    """Create all nine source files with one small, distinguishable row."""
+    """Cria os nove arquivos de origem com uma linha pequena e distinguível."""
     indicator = pd.DataFrame(
         {
             "ANO MÊS": ["202501"],
@@ -82,7 +82,7 @@ def small_source_dir(tmp_path: Path) -> Path:
 
 
 def test_parse_args_defaults_and_values(tmp_path: Path) -> None:
-    """CLI values are converted to their typed configuration fields."""
+    """Os valores da CLI são convertidos para os campos tipados de configuração."""
     config = parse_args(
         [
             "--input-dir",
@@ -106,13 +106,13 @@ def test_parse_args_defaults_and_values(tmp_path: Path) -> None:
 
 
 def test_parse_args_rejects_non_positive_integer() -> None:
-    """Positive-only numeric CLI options reject zero and negative values."""
+    """As opções numéricas positivas da CLI rejeitam valores zero e negativos."""
     with pytest.raises(SystemExit):
         parse_args(["--test-months", "0"])
 
 
 def test_package_cli_help_lists_required_options() -> None:
-    """The package entrypoint exposes the documented command-line contract."""
+    """O ponto de entrada do pacote expõe o contrato documentado da linha de comando."""
     result = subprocess.run(
         [sys.executable, "-m", "modelo_confiabilidade", "--help"],
         capture_output=True,
@@ -126,7 +126,7 @@ def test_package_cli_help_lists_required_options() -> None:
 
 
 def test_data_and_audit_functions_have_new_owners() -> None:
-    """Data loading and structural auditing are exposed by their modules."""
+    """O carregamento de dados e a auditoria estrutural são expostos por seus módulos."""
     from modelo_confiabilidade.auditoria import audit_data_quality as owned_audit
     from modelo_confiabilidade.dados import (
         create_lag_features as owned_lags,
@@ -139,7 +139,7 @@ def test_data_and_audit_functions_have_new_owners() -> None:
 
 
 def test_modeling_and_diagnostics_have_new_owners() -> None:
-    """Modeling and diagnostics are exposed by their focused modules."""
+    """A modelagem e os diagnósticos são expostos por seus módulos específicos."""
     from modelo_confiabilidade.diagnosticos import classify_validity as owned_classification
     from modelo_confiabilidade.modelagem import run_temporal_validation as owned_validation
 
@@ -148,7 +148,7 @@ def test_modeling_and_diagnostics_have_new_owners() -> None:
 
 
 def test_reports_are_owned_by_reports_module(tmp_path: Path) -> None:
-    """Report persistence is exposed by the reports module."""
+    """A persistência de relatórios é exposta pelo módulo de relatórios."""
     from modelo_confiabilidade.relatorios import save_results as owned_save_results
 
     owned_save_results({"metricas_modelos": pd.DataFrame({"x": [1]})}, tmp_path)
@@ -157,19 +157,19 @@ def test_reports_are_owned_by_reports_module(tmp_path: Path) -> None:
 
 
 def test_missing_required_source_is_reported(tmp_path: Path) -> None:
-    """Missing indicator files produce an actionable validation error."""
+    """Arquivos de indicadores ausentes produzem um erro de validação acionável."""
     with pytest.raises(DataValidationError, match="INDICADORES MENSAIS"):
         load_indicator_files(tmp_path)
 
 
 def test_missing_operational_source_is_reported(tmp_path: Path) -> None:
-    """Missing operational files identify the expected source and path."""
+    """Arquivos operacionais ausentes identificam a fonte e o caminho esperados."""
     with pytest.raises(DataValidationError, match="AMS_Contador"):
         load_operational_files(tmp_path)
 
 
 def test_file_constants_cover_the_four_xlsx_and_five_csv_sources() -> None:
-    """The loader contract names every source explicitly."""
+    """O contrato do carregador nomeia explicitamente todas as fontes."""
     assert len(INDICATOR_FILES) == 4
     assert len(OPERATIONAL_FILES) == 5
     assert all(name.endswith(".xlsx") for name in INDICATOR_FILES.values())
@@ -177,7 +177,7 @@ def test_file_constants_cover_the_four_xlsx_and_five_csv_sources() -> None:
 
 
 def test_indicator_loader_reads_export_sheet(small_source_dir: Path) -> None:
-    """Indicator loading selects the required Export worksheet."""
+    """O carregamento de indicadores seleciona a planilha Export obrigatória."""
     loaded = load_indicator_files(small_source_dir)
 
     assert set(loaded) == set(INDICATOR_FILES)
@@ -186,7 +186,7 @@ def test_indicator_loader_reads_export_sheet(small_source_dir: Path) -> None:
 
 
 def test_operational_loader_reads_semicolon_and_utf8_bom(small_source_dir: Path) -> None:
-    """Operational loading decodes the documented delimiter and BOM."""
+    """O carregamento operacional decodifica o delimitador e o BOM documentados."""
     loaded = load_operational_files(small_source_dir)
 
     assert set(loaded) == set(OPERATIONAL_FILES)
@@ -195,7 +195,7 @@ def test_operational_loader_reads_semicolon_and_utf8_bom(small_source_dir: Path)
 
 
 def test_unreadable_source_has_path_and_correction(tmp_path: Path) -> None:
-    """Unreadable files report both the concrete path and expected correction."""
+    """Arquivos ilegíveis informam o caminho concreto e a correção esperada."""
     path = tmp_path / INDICATOR_FILES["caminhao"]
     path.write_bytes(b"not an xlsx")
 
@@ -209,7 +209,7 @@ def test_unreadable_source_has_path_and_correction(tmp_path: Path) -> None:
 
 
 def test_main_writes_log_file_and_replaces_handlers_safely(tmp_path: Path) -> None:
-    """Repeated CLI failures keep the file log usable and bounded to two handlers."""
+    """Falhas repetidas da CLI mantêm o registro em arquivo utilizável e limitado a dois manipuladores."""
     output_dir = tmp_path / "out"
     arguments = ["--input-dir", str(tmp_path / "missing"), "--output-dir", str(output_dir)]
 
@@ -222,7 +222,7 @@ def test_main_writes_log_file_and_replaces_handlers_safely(tmp_path: Path) -> No
 
 
 def test_logging_closes_previous_file_handler(tmp_path: Path) -> None:
-    """Replacing logger handlers closes the previous file descriptor."""
+    """Substituir os manipuladores do registro fecha o descritor de arquivo anterior."""
     logger = _configure_logging(tmp_path / "out")
     previous_file_handler = next(
         handler for handler in logger.handlers if isinstance(handler, logging.FileHandler)
@@ -390,7 +390,7 @@ def test_main_persists_missing_source_diagnostic(tmp_path: Path) -> None:
 
 
 def test_audit_only_report_contains_no_model_metrics(tmp_path: Path, small_source_dir: Path) -> None:
-    """Audit-only runs explain interruption without creating ML result tables."""
+    """Execuções somente de auditoria explicam a interrupção sem criar tabelas de resultados de ML."""
     output_dir = tmp_path / "out-audit-only"
 
     code = main(["--input-dir", str(small_source_dir), "--output-dir", str(output_dir)])
@@ -403,7 +403,7 @@ def test_audit_only_report_contains_no_model_metrics(tmp_path: Path, small_sourc
 
 
 def test_final_report_distinguishes_predictive_importance_from_semantics(tmp_path: Path) -> None:
-    """The report must not present unconfirmed raw fields as business meaning."""
+    """O relatório não deve apresentar campos brutos não confirmados como significado de negócio."""
     results = {
         "status": "completed",
         "base_analitica": pd.DataFrame(),
@@ -428,7 +428,7 @@ def test_final_report_distinguishes_predictive_importance_from_semantics(tmp_pat
 
 
 def test_main_does_not_require_group_map_when_tplnr_is_valid(small_source_dir: Path) -> None:
-    """The CLI derives groups from valid operational TPLNR values when no map is supplied."""
+    """A CLI deriva grupos a partir de valores TPLNR operacionais válidos quando nenhum mapa é fornecido."""
     for index, filename in enumerate(OPERATIONAL_FILES.values(), start=1):
         path = small_source_dir / filename
         frame = pd.read_csv(path, sep=";", encoding="utf-8-sig")
@@ -865,7 +865,7 @@ def _forecast_frame_with_known_driver_effect() -> pd.DataFrame:
 
 
 def test_oos_importance_uses_next_month_target_and_final_test_rows() -> None:
-    """OOS explanations rank the driver of the forecast target, not the contemporaneous response."""
+    """As explicações OOS classificam o fator do alvo previsto, não a resposta contemporânea."""
     data = _forecast_frame_with_known_driver_effect()
     predictions, _, metadata = run_temporal_validation(
         data, "DF (REAL)", Config(test_months=2, min_train_rows=6, min_test_rows=2)
@@ -888,7 +888,7 @@ def test_oos_importance_uses_next_month_target_and_final_test_rows() -> None:
 
 
 def test_temporal_validation_excludes_other_reliability_responses() -> None:
-    """Other reliability responses never become predictors for a selected response."""
+    """Outras respostas de confiabilidade nunca se tornam preditoras da resposta selecionada."""
     frame = _forecast_frame_with_all_responses()
 
     _, _, metadata = run_temporal_validation(
@@ -900,7 +900,7 @@ def test_temporal_validation_excludes_other_reliability_responses() -> None:
 
 
 def test_temporal_validation_uses_explicit_operational_predictor_contract() -> None:
-    """The caller can constrain training to the supplied operational predictors."""
+    """O chamador pode restringir o treinamento aos preditores operacionais fornecidos."""
     frame = _forecast_frame_with_all_responses()
 
     _, _, metadata = run_temporal_validation(
@@ -915,7 +915,7 @@ def test_temporal_validation_uses_explicit_operational_predictor_contract() -> N
 
 
 def test_temporal_exclusions_appear_with_origin_tag_in_features_excluidas(tmp_path: Path) -> None:
-    """Predictor exclusions from temporal validation are persisted with a distinct origin tag."""
+    """As exclusões de preditores da validação temporal são persistidas com uma tag de origem distinta."""
     from modelo_confiabilidade.modelagem import _temporal_validation_audit
 
     frame = _forecast_frame_with_all_responses()
@@ -941,7 +941,7 @@ def test_temporal_exclusions_appear_with_origin_tag_in_features_excluidas(tmp_pa
 
 
 def test_temporal_validation_does_not_use_rows_without_operational_features() -> None:
-    """Months before operational coverage cannot become imputed training observations."""
+    """Meses anteriores à cobertura operacional não podem se tornar observações de treinamento imputadas."""
     frame = _forecast_frame_with_missing_operational_months()
 
     _, _, metadata = run_temporal_validation(
@@ -1495,7 +1495,7 @@ def test_audit_only_run_writes_quality_report_and_returns_error(small_source_dir
 
 
 def test_normalize_indicator_frame_expurgates_inf_negatives_and_out_of_scale_percentages() -> None:
-    """UF (META) and percentage indicators expurgate inf, negative and >100 process deviations."""
+    """UF (META) e indicadores percentuais eliminam desvios de processo infinitos, negativos ou acima de 100."""
     frame = pd.DataFrame({
         "ANO MÊS": ["202501", "202502", "202503", "202504", "202505", "202506"],
         "EQUIPAMENTO": ["EQ-1", "EQ-1", "EQ-1", "EQ-1", "EQ-1", "EQ-1"],
@@ -1532,7 +1532,7 @@ def test_normalize_indicator_frame_expurgates_inf_negatives_and_out_of_scale_per
 
 
 def test_compute_real_vs_meta_calculates_gaps_and_achievement() -> None:
-    """Real vs Meta computes absolute difference, percentage deviation and status."""
+    """Real versus Meta calcula diferença absoluta, desvio percentual e status."""
     from modelo_confiabilidade.relatorios import compute_real_vs_meta
 
     frame = pd.DataFrame({
@@ -1569,7 +1569,7 @@ def test_compute_real_vs_meta_calculates_gaps_and_achievement() -> None:
 
 
 def test_compute_indicator_correlations_prioritizes_mtbf_and_df() -> None:
-    """Correlations rank MTBF as top priority and DF as secondary priority."""
+    """As correlações classificam MTBF como prioridade principal e DF como prioridade secundária."""
     from modelo_confiabilidade.relatorios import compute_indicator_correlations
 
     analytic = pd.DataFrame({
@@ -1591,7 +1591,7 @@ def test_compute_indicator_correlations_prioritizes_mtbf_and_df() -> None:
 
 
 def test_predictor_selection_excludes_meta_and_uf_columns() -> None:
-    """Predictor selection explicitly rejects META columns and UF columns."""
+    """A seleção de preditores rejeita explicitamente colunas META e UF."""
     from modelo_confiabilidade.modelagem import _select_predictor_columns
 
     frame = pd.DataFrame({

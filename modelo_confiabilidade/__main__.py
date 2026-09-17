@@ -1,4 +1,4 @@
-"""Entry point for ``python -m modelo_confiabilidade``."""
+"""Ponto de entrada para ``python -m modelo_confiabilidade``."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from .diagnosticos import (
     extract_model_explanations,
     run_statistical_diagnostics,
 )
+from .deploy import export_model_artifacts, fit_production_estimators
 from .modelagem import _temporal_validation_audit, run_temporal_validation
 from .relatorios import (
     compute_indicator_correlations,
@@ -151,6 +152,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         coverage_frames: list[pd.DataFrame] = []
         temporal_exclusion_frames: list[pd.DataFrame] = []
         classification_rows: list[dict[str, object]] = []
+        model_export_requests: list[dict[str, object]] = []
         response_columns = [
             column
             for column in analysis_indicators.columns
@@ -213,6 +215,59 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ranking_frames.append(ranking)
                 classification = classify_validity(response_metrics, diagnostic, lag_metadata, config)
                 classification_rows.append({"resposta": response, **classification})
+                final_estimators = metadata.get("final_estimators", {})
+                export_estimators = final_estimators
+                export_fit_scope = "treino_final (teste OOS excluido)"
+                export_training_periods = tuple(metadata.get("train_target_periods", ()))
+                production_train = pd.concat(
+                    [train_frame, validation_frame], ignore_index=True
+                )
+                if isinstance(final_estimators, Mapping) and final_estimators:
+                    try:
+                        export_estimators = fit_production_estimators(
+                            final_estimators,
+                            production_train,
+                            metadata.get("feature_columns", []),
+                            target_column=str(metadata.get("forecast_target_column", "_target")),
+                        )
+                        export_fit_scope = "historico_completo_pos_validacao"
+                        export_training_periods += tuple(metadata.get("test_target_periods", ()))
+                    except Exception as exc:
+                        # A falha do reajuste não apaga o estimador validado; o escopo
+                        # exportado identifica claramente que o OOS não foi incluído.
+                        logger.warning(
+                            "Refit de producao indisponivel para %s; exportando estimador OOS: %s",
+                            response,
+                            exc,
+                        )
+                recommended_model = ""
+                if not response_metrics.empty and {"modelo", "mae", "divisao"}.issubset(response_metrics.columns):
+                    candidates = response_metrics[
+                        response_metrics["divisao"].astype(str).eq("teste_final")
+                        & ~response_metrics["modelo"].astype(str).str.startswith("baseline")
+                        & pd.to_numeric(response_metrics["mae"], errors="coerce").notna()
+                    ].sort_values("mae")
+                    if not candidates.empty:
+                        recommended_model = str(candidates.iloc[0]["modelo"])
+                requested_models = set(getattr(config, "export_models", ()))
+                if "recommended" in requested_models:
+                    requested_models = {recommended_model} if recommended_model else set()
+                export_estimators = {
+                    str(model_name): estimator
+                    for model_name, estimator in export_estimators.items()
+                    if str(model_name) in requested_models
+                } if isinstance(export_estimators, Mapping) else {}
+                if export_estimators:
+                    model_export_requests.append({
+                        "response": response,
+                        "estimators": export_estimators,
+                        "feature_columns": metadata.get("feature_columns", []),
+                        "training_periods": export_training_periods,
+                        "classification": classification.get("classificacao"),
+                        "recommended_model": recommended_model,
+                        "config": config,
+                        "fit_scope": export_fit_scope,
+                    })
                 logger.info(
                     "Resposta %s: concluida em %.1f min",
                     response,
@@ -231,6 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             feature_columns=lag_feature_columns,
             response_columns=response_columns,
         )
+        exported_models = export_model_artifacts(model_export_requests, config.output_dir)
         results.update({
             "status": "completed",
             "audit": audit,
@@ -255,6 +311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if diagnostic_frames
             else pd.DataFrame(),
             "classificacao": pd.DataFrame(classification_rows),
+            "modelos_exportados": exported_models,
         })
         save_results(results, config.output_dir)
         logger.info("Resultados salvos em %s; gerando graficos", config.output_dir)

@@ -41,6 +41,7 @@ python -m modelo_confiabilidade --help
 | `--min-baseline-improvement` | `0.0` | Melhoria mínima sobre persistência |
 | `--max-metric-cv` | `1.0` | Instabilidade máxima entre janelas |
 | `--max-vif` | `10.0` | VIF máximo tolerado |
+| `--export-models` | todos | Modelos exportados; use `recommended` para salvar somente o melhor modelo OOS |
 
 ## Interpretar o status
 
@@ -61,6 +62,70 @@ python -m modelo_confiabilidade --help
 - `diagnosticos_estatisticos.csv`, `importancia_variaveis.csv` e `coeficientes_elastic_net.csv`: diagnósticos e explicabilidade.
 - `real_x_meta.csv` e `correlacoes_indicadores.csv`: análises descritivas.
 - `graficos/`: visualizações OOS.
+- `modelos/`: pipelines treinados em arquivos `.joblib` e `manifest.json`.
+- `modelos_exportados.csv`: inventário dos modelos exportados e sua permissão de uso.
+
+## Utilizar um modelo exportado
+
+A execução da CLI exporta automaticamente os estimadores treinados. Após a validação, o artefato é refitado com todo o histórico rotulado e contém o pipeline completo (imputador, normalizador e modelo) e o contrato das features:
+
+```python
+from pathlib import Path
+from modelo_confiabilidade.deploy import predict_latest_from_artifact
+
+previsoes = predict_latest_from_artifact(
+    Path("resultados/modelos/MTBF_REAL__random_forest.joblib"),
+    base_analitica,
+)
+```
+
+A instrução `from modelo_confiabilidade.deploy import predict_latest_from_artifact` importa, do módulo `deploy`, a função que utiliza o modelo salvo. Ela valida as features, seleciona o período mais recente de cada grupo, chama `predict()` e informa o período previsto (`t+1`). O `.joblib` contém o modelo, enquanto `deploy.py` concentra a lógica segura de utilização.
+
+Embora seja possível fazer manualmente com `joblib`, essa forma não valida o contrato completo:
+
+```python
+import joblib
+
+artefato = joblib.load("resultados/modelos/MTBF_REAL__random_forest.joblib")
+previsoes = artefato["estimator"].predict(
+    base_analitica[artefato["feature_columns"]]
+)
+```
+
+Por isso, `predict_latest_from_artifact` é a forma recomendada. `base_analitica` deve ter as mesmas colunas agregadas e defasadas (`lag_0` até `lag_6`) do treinamento. Por segurança, modelos classificados como `INVALIDO` ou `EXPLORATORIO` são bloqueados; para experimentação, use explicitamente `allow_invalid=True`.
+
+### Escolher quais modelos exportar
+
+#### Salvar apenas Random Forest
+
+```bash
+python -m modelo_confiabilidade \
+  --export-models random_forest
+```
+
+Serão gerados, por exemplo:
+
+```text
+resultados/modelos/DF_REAL__random_forest.joblib
+resultados/modelos/MTBF_REAL__random_forest.joblib
+...
+```
+
+#### Salvar vários modelos
+
+```bash
+python -m modelo_confiabilidade \
+  --export-models elastic_net xgboost
+```
+
+#### Salvar somente o melhor modelo OOS
+
+```bash
+python -m modelo_confiabilidade \
+  --export-models recommended
+```
+
+Nesse caso, o melhor modelo é escolhido pelo menor MAE no teste fora da amostra. Os três modelos continuam sendo treinados para comparação; essa opção controla somente quais artefatos serão exportados.
 
 Para testes automatizados:
 

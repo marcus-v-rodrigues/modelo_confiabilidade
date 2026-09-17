@@ -90,18 +90,18 @@ def load_operational_files(input_dir: Path) -> dict[str, pd.DataFrame]:
 
 
 def _comparison_text(value: object) -> str:
-    """Return an accent-free, whitespace-normalized value for comparisons."""
+    """Retorna um valor sem acentos e com espaços normalizados para comparações."""
     text = unicodedata.normalize("NFKD", str(value)).encode("ascii", "ignore").decode()
     return " ".join(text.upper().strip().split())
 
 
 def _column_key(value: object) -> str:
-    """Create an accent-insensitive key without changing the stored label."""
+    """Cria uma chave sem distinção de acentos sem alterar o rótulo armazenado."""
     return "".join(character for character in _comparison_text(value) if character.isalnum())
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Trim column labels while preserving their spelling and accents."""
+    """Remove espaços extras dos rótulos das colunas preservando grafia e acentos."""
     # Trabalhamos sobre uma cópia para não modificar a fonte recebida.
     result = df.copy()
     result.columns = [
@@ -124,7 +124,7 @@ def parse_month_series(series: pd.Series, column_name: str) -> pd.Series:
 
 
 def normalize_indicator_frame(df: pd.DataFrame, source: str) -> pd.DataFrame:
-    """Clean structural rows and safely coerce known indicator measures."""
+    """Limpa linhas estruturais e converte com segurança as medidas conhecidas."""
     # Normaliza rótulos antes de validar linhas e converter medidas.
     result = normalize_columns(df)
     if result.empty:
@@ -217,7 +217,7 @@ def _mapping_error(message: str) -> DataValidationError:
 
 
 def _normalize_group_values(frame: pd.DataFrame, source: str) -> pd.DataFrame:
-    """Normalize group labels and reject missing or whitespace-only groups."""
+    """Normaliza rótulos de grupo e rejeita grupos ausentes ou compostos apenas por espaços."""
     result = frame.copy()
     if "GRUPO" not in result.columns:
         return result
@@ -234,7 +234,7 @@ def derive_tplnr_hierarchy(
     frame: pd.DataFrame,
     tplnr_column: str = "TPLNR",
 ) -> pd.DataFrame:
-    """Derive the group and equipment from TPLNR segments, tolerating unassigned records."""
+    """Deriva grupo e equipamento dos segmentos de TPLNR tolerando registros não atribuídos."""
     if tplnr_column not in frame.columns:
         raise DataValidationError(f"Coluna TPLNR ausente: {tplnr_column}")
 
@@ -277,7 +277,7 @@ def build_hierarchy_group_mapping(
     indicators: pd.DataFrame,
     operational: Mapping[str, pd.DataFrame],
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
-    """Derive operational groups from TPLNR and join them to indicators."""
+    """Deriva grupos operacionais a partir de TPLNR e os associa aos indicadores."""
     derived_operational: dict[str, pd.DataFrame] = {}
     for source, frame in operational.items():
         try:
@@ -366,7 +366,7 @@ def build_group_mapping(
     operational: Mapping[str, pd.DataFrame],
     map_file: Path | None,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
-    """Apply only an explicit equipment-to-group mapping to every source."""
+    """Aplica somente um mapeamento explícito de equipamento para grupo a cada fonte."""
     frames = {
         "indicadores": _normalize_group_values(indicators, "indicadores"),
         **{name: _normalize_group_values(frame, name) for name, frame in operational.items()},
@@ -463,10 +463,10 @@ def _parse_month_column(frame: pd.DataFrame, month: str) -> pd.Series:
 
 
 def _looks_like_dates(series: pd.Series) -> bool:
-    """Detect text columns whose values are calendar dates.
+    """Detecta colunas de texto cujos valores são datas de calendário.
 
-    Proportions of a specific date are meaningless temporal artifacts, so such
-    columns only receive count/nunique aggregations.
+    Proporções de uma data específica não têm significado temporal; por isso,
+    essas colunas recebem somente agregações de contagem e valores distintos.
     """
     values = series.dropna().astype("string").str.strip()
     values = values[values.ne("")]
@@ -481,7 +481,7 @@ def _looks_like_dates(series: pd.Series) -> bool:
 
 
 def aggregate_monthly_data(frame: pd.DataFrame, excluded_columns: Sequence[str] = ()) -> pd.DataFrame:
-    """Aggregate eligible columns at ``GRUPO``/month and attach coverage stats."""
+    """Agrega colunas elegíveis por ``GRUPO``/mês e anexa estatísticas de cobertura."""
     if "GRUPO" not in frame.columns or _month_column(frame) is None:
         raise DataValidationError("Base operacional requer GRUPO e uma coluna mensal")
     result = frame.copy()
@@ -553,15 +553,16 @@ def build_operational_features(
     operational: Mapping[str, pd.DataFrame],
     feature_config: Mapping[str, object] | Sequence[Mapping[str, object]] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Discover monthly candidates and explicitly configured derivations.
+    """Descobre candidatos mensais e derivações configuradas explicitamente.
 
-    ``feature_config`` accepts either a list of specs or a mapping with a
-    ``derived`` list, optional ``future_columns`` list and optional
-    ``reference_frame`` at the indicator grain. Each spec has
-    ``name``, ``source``, ``fields``, ``transform`` (``sum``, ``mean``,
-    ``difference`` or a callable), ``aggregation`` and ``semantic_status``.
-    A derived feature is created only when all fields validate and a transform
-    is present. No AMS/AMC/APR/backlog alias is inferred from a column name.
+    ``feature_config`` aceita uma lista de especificações ou um mapeamento com
+    a lista ``derived``, a lista opcional ``future_columns`` e o
+    ``reference_frame`` opcional no nível dos indicadores. Cada especificação
+    possui ``name``, ``source``, ``fields``, ``transform`` (``sum``, ``mean``,
+    ``difference`` ou uma função), ``aggregation`` e ``semantic_status``.
+    Uma feature derivada só é criada quando todos os campos são válidos e há
+    uma transformação definida. Nenhum alias AMS/AMC/APR/backlog é inferido
+    a partir do nome de uma coluna.
     """
     fixed_excluded = pd.DataFrame(columns=["fonte", "campo_original", "motivo"])
     if isinstance(feature_config, Mapping):
@@ -892,7 +893,7 @@ def create_lag_features(
 
 
 def _indicator_analysis_frame(indicators: pd.DataFrame) -> pd.DataFrame:
-    """Normalize indicator grain and expose its response columns as MES rows."""
+    """Normaliza o nível dos indicadores e disponibiliza suas respostas como linhas de MES."""
     frame = indicators.copy()
     month = _month_column(frame)
     if month is None:
