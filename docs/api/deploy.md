@@ -1,97 +1,101 @@
 # `modelo_confiabilidade.deploy`
 
-Este módulo exporta os pipelines treinados e permite utilizá-los em novos dados.
+Exportação, carregamento e utilização dos pipelines treinados. Os artefatos
+preservam o estimador completo e o contrato de features usado no treinamento.
 
-## Exportação automática
+## `fit_production_estimators(estimators: Mapping[str, Any], data: DataFrame, feature_columns: Sequence[str], *, target_column: str = "_target") -> dict[str, Any]`
 
-A execução normal da CLI grava os modelos em `resultados/modelos/` e cria:
+Refaz o ajuste dos estimadores selecionados usando todo o histórico rotulado
+após a validação fora da amostra. Mantém os hiperparâmetros dos estimadores
+recebidos e retorna cópias ajustadas para produção. O último período, sem alvo
+`t+1` conhecido, deve ser excluído de `data` pelo chamador.
 
-- `*.joblib`: artefato contendo o pipeline completo, incluindo imputação, escala e estimador; a CLI refaz o ajuste com todo o histórico rotulado após a validação;
-- `manifest.json`: inventário dos artefatos, features, período de treino, classificação e modelo recomendado;
-- `../modelos_exportados.csv`: inventário tabular.
+`data` deve conter `feature_columns` e `target_column`. Histórico vazio,
+colunas ausentes ou ausência de alvos observados gera `ValueError`.
 
-A classificação `INVALIDO` ou `EXPLORATORIO` bloqueia o uso padrão do artefato. Isso evita que um resultado não aprovado seja usado acidentalmente em produção.
+## `export_model_artifact(estimator: Any, output_dir: Path, response: str, model_name: str, feature_columns: Sequence[str], *, classification: str | None = None, training_periods: Sequence[object] = (), config: object | None = None, fit_scope: str = "treino_final", recommended: bool = False) -> tuple[Path, dict[str, Any]]`
 
-## Escolher quais modelos exportar
+Serializa um estimador já ajustado e seu contrato de previsão em
+`output_dir/modelos/{resposta}__{modelo}.joblib`. O pipeline completo,
+incluindo imputação, escala e estimador, é salvo no artefato.
 
-A CLI permite controlar os arquivos que serão salvos:
+Retorna o caminho do arquivo e um registro tabular com resposta, modelo,
+período de treino, classificação e permissão de uso. O estimador precisa estar
+ajustado e possuir `predict()`; ao menos uma feature deve ser informada.
 
-### Salvar apenas Random Forest
+## `export_model_artifacts(requests: Sequence[Mapping[str, Any]], output_dir: Path) -> pandas.DataFrame`
+
+Exporta vários estimadores e grava `output_dir/modelos/manifest.json`. Cada
+item de `requests` deve conter `estimators`, `response` e `feature_columns`;
+pode também conter `classification`, `training_periods`, `config`, `fit_scope`
+e `recommended_model`.
+
+Retorna o inventário dos artefatos como `DataFrame` e cria também o arquivo
+`output_dir/modelos_exportados.csv` quando o resultado é persistido pelo
+pipeline de relatórios. O manifesto registra a versão, a data de geração e os
+arquivos exportados.
+
+## `load_model_artifact(path: Path | str) -> dict[str, Any]`
+
+Carrega um arquivo `.joblib` e valida sua estrutura mínima. O retorno contém,
+entre outros campos, `estimator`, `feature_columns`, `response` e `model_name`.
+Artefatos que não sejam dicionários, não tenham os campos obrigatórios ou não
+contenham um estimador com `predict()` geram `ValueError`.
+
+## `predict_from_artifact(artifact: Path | str | Mapping[str, Any], data: DataFrame, *, allow_invalid: bool = False) -> pandas.DataFrame`
+
+Aplica o artefato a todas as linhas de `data`. `artifact` pode ser o caminho de
+um arquivo ou o dicionário retornado por `load_model_artifact`. Os dados devem
+conter todas as colunas listadas em `feature_columns`; as agregações e os lags
+não são recriados pela função.
+
+Retorna colunas como `resposta`, `modelo`, `GRUPO`,
+`periodo_referencia`, `periodo_previsto` e `valor_previsto`. Quando houver um
+período (`MES`, `periodo` ou `ANO MÊS`), `periodo_previsto` corresponde ao mês
+seguinte.
+
+Por segurança, uma classificação diferente de `VALIDO` bloqueia a previsão.
+Para avaliação controlada, a liberação deve ser explícita com
+`allow_invalid=True`.
+
+## `predict_latest_from_artifact(artifact: Path | str | Mapping[str, Any], data: DataFrame, *, allow_invalid: bool = False) -> pandas.DataFrame`
+
+Seleciona a linha mais recente de cada `GRUPO` e delega a previsão a
+`predict_from_artifact`. Sem uma coluna de período reconhecida, ou sem dados,
+usa diretamente todas as linhas recebidas.
+
+## Constantes
+
+- `ARTIFACT_VERSION`: versão do formato dos artefatos; atualmente `1`.
+- `MANIFEST_FILENAME`: nome do manifesto gerado, `manifest.json`.
+
+## Exportação automática pela CLI
+
+A execução normal da CLI refaz o ajuste dos modelos com todo o histórico
+rotulado após a validação e exporta os modelos selecionados em
+`resultados/modelos/`. A opção `--export-models` aceita `elastic_net`,
+`random_forest`, `xgboost` ou `recommended`:
 
 ```bash
-python -m modelo_confiabilidade \
-  --export-models random_forest
+python -m modelo_confiabilidade --export-models random_forest
+python -m modelo_confiabilidade --export-models recommended
 ```
 
-Serão gerados, por exemplo:
+`recommended` exporta o modelo com menor MAE no teste fora da amostra. Os
+artefatos não aprovados continuam bloqueados pela API de previsão.
 
-```text
-resultados/modelos/DF_REAL__random_forest.joblib
-resultados/modelos/MTBF_REAL__random_forest.joblib
-...
-```
-
-### Salvar vários modelos
-
-```bash
-python -m modelo_confiabilidade \
-  --export-models elastic_net xgboost
-```
-
-### Salvar somente o melhor modelo OOS
-
-```bash
-python -m modelo_confiabilidade \
-  --export-models recommended
-```
-
-`recommended` escolhe o modelo com menor MAE no teste fora da amostra. Os três modelos continuam sendo treinados para comparação; `--export-models` controla somente quais artefatos serão gravados.
-
-## Utilização
-
-As funções públicas são `export_model_artifact`, `export_model_artifacts`, `fit_production_estimators`, `load_model_artifact`, `predict_from_artifact` e `predict_latest_from_artifact`. `fit_production_estimators` preserva os hiperparâmetros escolhidos no OOS e refaz o ajuste com todo o histórico rotulado.
-
-Os dados devem estar no mesmo contrato da base analítica: uma linha por `GRUPO × MES`, com as features agregadas e os mesmos `lag_0` até `lag_max` usados no treinamento.
+## Exemplo
 
 ```python
 from pathlib import Path
-from modelo_confiabilidade.deploy import (
-    load_model_artifact,
-    predict_latest_from_artifact,
-)
+from modelo_confiabilidade.deploy import predict_latest_from_artifact
 
-# ``deploy`` concentra a lógica de utilização dos artefatos.
-# Esta importação traz a função que valida as features, seleciona o último
-# período de cada grupo e chama o predict() do pipeline salvo.
-artifact = load_model_artifact(
-    Path("resultados/modelos/MTBF_REAL__random_forest.joblib")
-)
-previsoes = predict_latest_from_artifact(artifact, base_analitica)
-```
-
-A instrução `from modelo_confiabilidade.deploy import predict_latest_from_artifact` significa: importar, do módulo `deploy` do pacote `modelo_confiabilidade`, a função responsável por utilizar o modelo. O arquivo `.joblib` contém o estimador, mas o módulo `deploy` também garante o contrato de features, escolhe a linha mais recente por grupo e informa o período `t+1`.
-
-É possível chamar o artefato manualmente, mas isso exige reproduzir essas validações:
-
-```python
-import joblib
-
-artefato = joblib.load("resultados/modelos/MTBF_REAL__random_forest.joblib")
-modelo = artefato["estimator"]
-X = base_analitica[artefato["feature_columns"]]
-previsoes = modelo.predict(X)
-```
-
-Por isso, a função do módulo `deploy` é a forma recomendada de utilização.
-
-Para testar um artefato ainda não aprovado, a liberação precisa ser explícita:
-
-```python
 previsoes = predict_latest_from_artifact(
-    artifact, base_analitica, allow_invalid=True
+    Path("resultados/modelos/MTBF_REAL__random_forest.joblib"),
+    base_analitica,
 )
 ```
 
-`predict_from_artifact` prevê todas as linhas recebidas; `predict_latest_from_artifact` seleciona a linha mais recente de cada grupo e informa `periodo_previsto = periodo_referencia + 1`. O campo `recomendado` do manifesto identifica o melhor modelo OOS; ele continua bloqueado se a classificação da resposta não for `VALIDO`.
-
-O módulo não lê os CSVs brutos nem recria agregações e lags. Essa preparação deve ser feita pelo mesmo pipeline de dados usado no treinamento. A última linha sem alvo `t+1` não participa do refit, mas é a linha usada como entrada para a previsão seguinte.
+`base_analitica` deve seguir o mesmo contrato do treinamento: uma linha por
+`GRUPO × MES`, com as features agregadas e os mesmos lags. O módulo não lê os
+CSVs brutos nem recria a preparação dos dados.
